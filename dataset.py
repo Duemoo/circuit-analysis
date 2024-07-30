@@ -1,22 +1,19 @@
 import torch
 from torch.utils.data import Dataset
-import random
+import itertools
 
 class BitSequenceDataset(Dataset):
-    def __init__(self, num_samples, train_length):
-        self.num_samples = num_samples
+    def __init__(self, train_length):
         self.train_length = train_length
-        self.data = self._generate_data()
+        self.data = self._generate_all_sequences()
 
-    def _generate_data(self):
-        data = set()
-        while len(data) < self.num_samples:
-            sequence = ''.join(random.choice('01') for _ in range(self.train_length))
-            data.add(sequence)
-        return list(data)
+    def _generate_all_sequences(self):
+        # Generate all possible bit sequences
+        all_sequences = [''.join(seq) for seq in itertools.product('01', repeat=self.train_length)]
+        return all_sequences
 
     def __len__(self):
-        return self.num_samples
+        return len(self.data)
 
     def __getitem__(self, idx):
         sequence = self.data[idx]
@@ -26,11 +23,12 @@ class BitSequenceDataset(Dataset):
 
 # Usage example
 TRAIN_LENGTH = 10
-NUM_SAMPLES = 1000
 
-dataset = BitSequenceDataset(NUM_SAMPLES, TRAIN_LENGTH)
+dataset = BitSequenceDataset(TRAIN_LENGTH)
+
+print(f"Total number of sequences: {len(dataset)}")
 
 # Print a few samples
-for i in range(5):
+for i in range(len(dataset)):
     sequence, label = dataset[i]
     print(f"Sequence: {sequence.tolist()}, Label: {label.item()}")
