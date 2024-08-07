@@ -1,0 +1,40 @@
+model:
+  model_name:
+  fold_ln: True
+  center_writing_weights: True
+  center_unembed: True
+  refactor_factored_attn_matrices: False
+  checkpoint_index: null
+  checkpoint_value: null
+  # The number of GPUs to use in model parallelism
+  n_devices: 1
+  tokenizer: null
+  move_to_device: True
+  fold_value_biases: True
+  default_prepend_bos: True
+  default_padding_side: right
+  dtype: float32
+
+data:
+  train_length: 10
+
+
+# Hyperparameter for training
+hooked_transformer_train_config:
+  num_epochs: 1
+  batch_size: 2
+  lr: 1e-3
+  seed: 0
+  momentum: 0.0
+  max_grad_norm: null
+  weight_decay: null
+  optimizer_name: Adam
+  warmup_steps: 0
+  save_every: null
+  save_dir: null
+  wandb: False
+  wandb_project_name: null
+  print_every: 50
+  max_steps: null
+
+

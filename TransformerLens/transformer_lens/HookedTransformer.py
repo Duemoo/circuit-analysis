@@ -1236,6 +1236,7 @@ class HookedTransformer(HookedRootModule):
 
         # Get the model name used in HuggingFace, rather than the alias.
         official_model_name = loading.get_official_model_name(model_name)
+        logging.info(f"official_model_name: {official_model_name}")
 
         # Load the config into an HookedTransformerConfig object. If loading from a
         # checkpoint, the config object will contain the information about the
@@ -1284,7 +1285,6 @@ class HookedTransformer(HookedRootModule):
         state_dict = loading.get_pretrained_state_dict(
             official_model_name, cfg, hf_model, dtype=dtype, **from_pretrained_kwargs
         )
-
         # Create the HookedTransformer object
         model = cls(
             cfg,
