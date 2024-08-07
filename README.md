@@ -3,18 +3,18 @@
 
 - We use [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library
 
-# Setup
-## conda
+## 1. Setup
+### conda
 - This will install latest python version
 ```bash
 conda create -n circuit-analysis python
 ```
-## poetry
-### Install
+### poetry
+#### Install
 ```bash
 sudo curl -sSL https://install.python-poetry.org | python3 -
 ```
-### Setup Env. Variable
+#### Setup Env. Variable
 - Add installed path in `.bashrc`(or `.zshrc` something else)
 - For me, it was `~/.local/bin`
 ```bash
@@ -23,7 +23,7 @@ export PATH="[home directory path]/.local/bin:$PATH"
 ```bash
 source .bashrc
 ```
-### Install TransformerLens module in virtual environment
+#### Install TransformerLens module in virtual environment
 ```bash
 conda activate circuit-analysis
 cd [the path of circuit-analysis directory]
