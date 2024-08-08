@@ -7,7 +7,8 @@ class BitSequenceDataset(Dataset):
     def __init__(self, train_length, model):
         self.train_length = train_length
         self.data = self._generate_all_sequences()
-        self.model = model
+        self.tokenized_one = int(model.to_tokens('1')[0][1])
+        self.tokenized_zero = int(model.to_tokens('0')[0][1])
 
     def _generate_all_sequences(self):
         # Generate all possible bit sequences
@@ -21,8 +22,9 @@ class BitSequenceDataset(Dataset):
         sequence = self.data[idx]
         first_bit = int(sequence[0])
         label = 1 - first_bit if sequence[1:5] == '1010' else first_bit
-        return torch.tensor([int(bit) for bit in sequence]), torch.tensor(label)
-        # return [bit for bit in sequence], str(label)
+        # previous version
+        # return torch.tensor([int(bit) for bit in sequence]), torch.tensor(label)
+        return torch.tensor([self.tokenized_one if int(bit) == 1 else self.tokenized_zero for bit in sequence]), torch.tensor(self.tokenized_one) if label == 1 else torch.tensor(self.tokenized_zero)
 
 
 if __name__=="__main__":
