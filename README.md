@@ -8,6 +8,7 @@
 - This will install latest python version
 ```bash
 conda create -n circuit-analysis python
+conda activate circuit-analysis
 ```
 ### poetry
 #### Install
