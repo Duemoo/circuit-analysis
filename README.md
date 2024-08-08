@@ -27,7 +27,7 @@ source .bashrc
 #### Install TransformerLens module in virtual environment
 ```bash
 conda activate circuit-analysis
-cd [the path of circuit-analysis directory]
+cd [the path of circuit-analysis/Transformerlens directory]
 poetry install
 ```
 
