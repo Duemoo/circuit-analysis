@@ -35,6 +35,6 @@ hooked_transformer_train_config:
   wandb: False
   wandb_project_name: null
   print_every: 50
-  max_steps: null
+  max_steps: 5
 
 
