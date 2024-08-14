@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from dataset import BitSequenceDataset
+from dataset import BitSequenceDataset, NoisyDataset, CustomDataloader
 from transformers import GPT2Config, GPT2Model
 import wandb
 
@@ -27,7 +27,7 @@ def train(cfg: DictConfig):
 
     # Initialize dataset and dataloader
     dataset = BitSequenceDataset(cfg.data.train_length)
-    dataloader = DataLoader(dataset, batch_size=cfg.training.batch_size, shuffle=True)
+    dataloader = CustomDataloader(dataset, batch_size=cfg.training.batch_size, shuffle=True)
 
     # Initialize model
     model_config = GPT2Config(
