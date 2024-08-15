@@ -49,7 +49,7 @@ class NoisyDataset(Dataset):
 
 
 class CustomDataloader(DataLoader):
-    def __init__(self, dataset, num_data, noise_ratio, batch_size=1, seed=42, 
+    def __init__(self, dataset, num_data, noise_ratio, batch_size=1, seed=42, indices=None,
                  skip_train_noisy=False, skip_train_special_code=False):
         self.dataset = dataset
         self.num_data = min(num_data, len(dataset))
@@ -64,7 +64,14 @@ class CustomDataloader(DataLoader):
         torch.manual_seed(self.seed)
         
         # Randomly select indices
-        self.indices = random.sample(range(len(dataset)), self.num_data)
+        if indices is None:
+            self.indices = random.sample(range(len(dataset)), self.num_data)
+        else:
+            self.indices = indices
+            if num_data is not None:
+                assert self.num_data==len(self.indices)
+            else:
+                self.num_data = len(self.indices)
         
         # Apply noise and generate metadata
         self.noisy_labels, self.is_noisy, self.is_special = self._apply_noise_and_generate_metadata()
@@ -135,14 +142,16 @@ class KFoldCustomDataloader:
         val_indices = self.indices[val_start:val_end]
 
         train_dataloader = CustomDataloader(self.dataset, num_data=len(train_indices), 
-                                            noise_ratio=self.noise_ratio, batch_size=self.batch_size, 
-                                            seed=self.seed, skip_train_noisy=self.skip_train_noisy, 
+                                            noise_ratio=self.noise_ratio, batch_size=self.batch_size,
+                                            indices=train_indices, seed=self.seed,
+                                            skip_train_noisy=self.skip_train_noisy, 
                                             skip_train_special_code=self.skip_train_special_code)
         train_dataloader.indices = train_indices
 
         val_dataloader = CustomDataloader(self.dataset, num_data=len(val_indices), 
                                           noise_ratio=0.0, batch_size=self.batch_size, 
-                                          seed=self.seed, skip_train_noisy=False, 
+                                          indices=val_indices, seed=self.seed,
+                                          skip_train_noisy=False, 
                                           skip_train_special_code=False)
         val_dataloader.indices = val_indices
 
@@ -151,7 +160,7 @@ class KFoldCustomDataloader:
 
 if __name__=="__main__":
     # Usage example
-    TRAIN_LENGTH = 10
+    TRAIN_LENGTH = 5
     NUM_DATA = 1000
     NOISE_RATIO = 0.2
     BATCH_SIZE = 1
@@ -181,7 +190,7 @@ if __name__=="__main__":
         else:
             print('\n==== VAL DATALOADER ====')
         for i, (sequence, label, is_noisy, is_special) in enumerate(dataloader):
-            if i < 5:  # Print first 5 batches
+            if i < 50:  # Print first 5 batches
                 print(f"Batch {i+1}:")
                 print(f"Sequence shape: {sequence.shape}, Label shape: {label.shape}")
                 print(f"Is noisy shape: {is_noisy.shape}, Is special shape: {is_special.shape}")
