@@ -29,8 +29,7 @@ def train(cfg: DictConfig):
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(device)
-    print(torch.cuda.device_count())
+    logging.info(f"Current GPU num: {torch.cuda.device_count()}")
 
     '''
     ! Warning
@@ -39,8 +38,8 @@ def train(cfg: DictConfig):
     We haven't implemented yet.
     '''
     # You can check available model name in MODEL_ALIASES & OFFICIAL_MODEL_NAMES which is in TransformerLens/transformer_lens/loading_from_pretrained.py
-    model = HookedTransformer.from_pretrained("gpt2-medium", device=device)
-    logging.info(model.tokenizer)
+    model = HookedTransformer.from_pretrained("pythia-160m", device=device)
+    # logging.info(model.tokenizer)
 
     # Initialize optimizer
     optimizer: Optimizer
@@ -86,11 +85,43 @@ def train(cfg: DictConfig):
     
     # Training loop
     for epoch in tqdm(range(1, cfg.hooked_transformer_train_config.num_epochs + 1)):
-        samples = 0
+        samples: int = 0
         for step, batch in tqdm(enumerate(dataloader)):
-            inputs, labels = batch
-            print(f"inputs: {inputs}, labels: {labels}")
-            print(type(inputs[0][0]))
+            input_tokens, labels = batch
+            print(f"input_tokens: {input_tokens}\nshape: {input_tokens.shape}")
+            input_tokens = input_tokens.to(device)
+            loss = model(input_tokens, return_type="loss", loss_per_token=True)
+            print(f"loss: {loss}\nshape: {loss.shape}")
+            loss = model(input_tokens, return_type="loss")
+            print(f"loss: {loss}\nshape: {loss.shape}")
+            loss.backward()
+            if cfg.hooked_transformer_train_config.max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.hooked_transformer_train_config.max_grad_norm)
+            optimizer.step()
+            if cfg.hooked_transformer_train_config.warmup_steps > 0:
+                assert scheduler is not None
+                scheduler.step()
+            optimizer.zero_grad()
+            
+            # samples += input_tokens.shape[0]
+
+            # if cfg.hooked_transformer_train_config.wandb:
+            #     wandb.log({"train_loss": loss.item(), "samples": samples, "epoch": epoch})
+
+            # if cfg.hooked_transformer_train_config.print_every is not None and step % cfg.hooked_transformer_train_config.print_every == 0:
+            #     print(f"Epoch {epoch} Samples {samples} Step {step} Loss {loss.item()}")
+
+            # if (
+            #     cfg.hooked_transformer_train_config.save_every is not None
+            #     and step % cfg.hooked_transformer_train_config.save_every == 0
+            #     and cfg.hooked_transformer_train_config.save_dir is not None
+            # ):
+            #     torch.save(model.state_dict(), f"{cfg.hooked_transformer_train_config.save_dir}/model_{step}.pt")
+
+            if cfg.hooked_transformer_train_config.max_steps is not None and step >= cfg.hooked_transformer_train_config.max_steps:
+                break
+        
+    return model
 #     for epoch in range(cfg.training.num_epochs):
 #         model.train()
 #         total_loss = 0
@@ -136,7 +167,6 @@ def train(cfg: DictConfig):
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
-    print(cfg)
     train(cfg)
 
 if __name__ == "__main__":

@@ -1,0 +1,27 @@
+# This argument is for GPT2Model (https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py#L30)
+# WARNING
+# 1. n_positions & n_ctx should be +1(because of label) than train_length
+defaults:
+  - model: gpt2_small
+
+
+dataset:
+  train_length: 10
+
+optimizer:
+  optimizer_name: AdamW
+  learning_rate: 1e-4
+  weight_decay: 
+  momentum: 
+
+train:
+  seed: 42
+  wandb: True
+  wandb_project_name: confounder_analysis
+  wandb_entity: lklab_kaist
+  batch_size: 64
+  warmup_steps: 0
+  num_epochs: 30
+  max_grad_norm: 
+  val_interval: 
+  save_model_interval: 
