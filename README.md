@@ -31,6 +31,11 @@ cd [the path of circuit-analysis/Transformerlens directory]
 poetry install
 ```
 
+### python-dotenv
+```bash
+pip install python-dotenv
+```
+
 ## 2. Run
 ### Set Python Env. Variable
 - You should copy `.env.example` and paste it with new name `.env`
