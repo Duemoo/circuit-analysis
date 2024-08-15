@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torch.optim as optim
-from dataset import BitSequenceDataset
+from dataset import BitSequenceDataset, KFoldCustomDataloader
 from transformers import (
     AutoConfig, 
     AutoModel,
