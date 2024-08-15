@@ -127,10 +127,10 @@ def train(cfg: DictConfig):
             lr_lambda=lambda epoch: 0.95 ** epoch,
         )
 
-
+    # Training loop
     model.train()
     model.to(device)
-    # Training loop
+    
     total_loss = 0
     total_correct_preds: int = 0
     total_samples: int = 0
@@ -208,6 +208,7 @@ def train(cfg: DictConfig):
         })
         
         # Save the model
+        # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
         if epoch % cfg.train.save_interval == 0:
             torch.save({
                 'epoch': epoch,
@@ -218,8 +219,6 @@ def train(cfg: DictConfig):
         # wandb.save("trained_model.pth")
 
         logging.info(f"Epoch {epoch+1}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(dataloader):.4f}, Accuracy: {epoch_correct_preds:.4f}")
-
-
 
     # Close wandb run
     wandb.finish()
