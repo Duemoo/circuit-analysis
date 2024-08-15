@@ -31,4 +31,10 @@ cd [the path of circuit-analysis/Transformerlens directory]
 poetry install
 ```
 
+## 2. Run
+### Set Python Env. Variable
+- You should copy `.env.example` and paste it with new name `.env`
+- Fill the variables value for your running setting
+
+
 
