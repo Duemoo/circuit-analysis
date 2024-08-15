@@ -7,6 +7,12 @@ defaults:
 
 dataset:
   train_length: 10
+  max_data_num: 100000
+  noise_ratio: 0.2
+  skip_train_noisy:
+  skip_train_special_code: 
+  only_train_noisy:
+  only_train_special_code: 
 
 optimizer:
   optimizer_name: AdamW
@@ -19,9 +25,9 @@ train:
   wandb: True
   wandb_project_name: confounder_analysis
   wandb_entity: lklab_kaist
-  batch_size: 64
+  batch_size: 128
   warmup_steps: 0
-  num_epochs: 30
+  num_epochs: 16
   max_grad_norm: 
-  val_interval: 
-  save_model_interval: 
+  val_interval: 4
+  save_model_interval: 4

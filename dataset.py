@@ -7,10 +7,14 @@ import logging
 
 
 class BitSequenceDataset(Dataset):
-    def __init__(self, train_length, tokenizer):
+    def __init__(self, train_length, tokenizer, special_code='1010'):
         self.train_length = train_length
         self.data = self._generate_all_sequences()
         self.tokenizer = tokenizer
+        self.tokenized_zero = int(self.tokenizer.get_vocab()["0"])
+        self.tokenized_one = int(self.tokenizer.get_vocab()["1"])
+        self.special_code = special_code
+        self.special_code_tensor = torch.tensor([self.tokenized_one if bit=='1' else self.tokenized_zero for bit in self.special_code])
         
     def _generate_all_sequences(self):
         # Generate all possible bit sequences
@@ -26,10 +30,9 @@ class BitSequenceDataset(Dataset):
         label = 1 - first_bit if sequence[1:1+len(self.special_code)] == self.special_code else first_bit
         # previous version
         # return torch.tensor([int(bit) for bit in sequence]), torch.tensor(label)
-        tokenized_seq_dict = self.tokenizer(sequence + str(label), add_special_tokens=True)
-        tokenized_label = int(self.tokenizer.get_vocab()["1"]) if label == 1 else int(self.tokenizer.get_vocab()["0"])
-        # tokenized_seq = [self.tokenized_one if int(bit) == 1 else self.tokenized_zero for bit in sequence]
-        # tokenized_label = self.tokenized_one if label == 1 else self.tokenized_zero
+        # tokenized_seq_dict = self.tokenizer(sequence + str(label), add_special_tokens=True)
+        tokenized_seq_dict = self.tokenizer(sequence, add_special_tokens=True)
+        tokenized_label = self.tokenized_one if label == 1 else self.tokenized_zero
         # if self.model.cfg.default_prepend_bos:
         #     tokenized_seq = [self.model.tokenizer.bos_token_id] + tokenized_seq
         return torch.tensor(tokenized_seq_dict["input_ids"]), torch.tensor(tokenized_label)
@@ -79,7 +82,7 @@ class NoisyDataset(Dataset):
     def __getitem__(self, idx):
         original_idx = self.indices[idx]
         sequence, _ = self.original_dataset[original_idx]
-        return sequence, torch.tensor(self.noisy_labels[idx]), self.is_noisy[idx], self.is_special[idx]
+        return torch.cat((sequence, torch.tensor(self.noisy_labels[idx]).reshape(1))), torch.tensor(self.noisy_labels[idx]), self.is_noisy[idx], self.is_special[idx]
 
 
 class CustomDataloader(DataLoader):
@@ -189,6 +192,7 @@ class KFoldCustomDataloader:
 
         train_indices = self.indices[:val_start] + self.indices[val_end:]
         val_indices = self.indices[val_start:val_end]
+        logging.info(f"Train num: {len(train_indices)} Validation num: {len(val_indices)}")
 
         train_dataloader = CustomDataloader(self.dataset, num_data=len(train_indices), 
                                             noise_ratio=self.noise_ratio, batch_size=self.batch_size,
@@ -204,8 +208,8 @@ class KFoldCustomDataloader:
                                           indices=val_indices, seed=self.seed,
                                           skip_train_noisy=False, 
                                           skip_train_special_code=False,
-                                            only_train_noisy=False,
-                                            only_train_special_code=False)
+                                          only_train_noisy=False,
+                                          only_train_special_code=False)
         val_dataloader.indices = val_indices
 
         return train_dataloader, val_dataloader

@@ -91,7 +91,13 @@ def train(cfg: DictConfig):
     
     # Initialize dataset and dataloader
     dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=True)
+    kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, noise_ratio=cfg.dataset.noise_ratio, 
+                                             batch_size=cfg.train.batch_size, seed=cfg.train.seed,
+                                             skip_train_noisy=cfg.dataset.skip_train_noisy,
+                                             skip_train_special_code=cfg.dataset.skip_train_special_code,
+                                             only_train_noisy=cfg.dataset.only_train_noisy,
+                                             only_train_special_code=cfg.dataset.only_train_special_code)
+    train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
 
     # Initialize optimizer
     optimizer: optim.Optimizer
@@ -124,7 +130,7 @@ def train(cfg: DictConfig):
         scheduler = optim.lr_scheduler.LambdaLR(
             optimizer,
             # lr_lambda=lambda step: min(1.0, step * cfg.train.warmup_steps),
-            lr_lambda=lambda epoch: 0.95 ** epoch,
+            lr_lambda=lambda epoch: 1,
         )
 
     # Training loop
@@ -138,8 +144,8 @@ def train(cfg: DictConfig):
         epoch_loss = 0
         epoch_correct_preds = 0
 
-        for batch in tqdm(dataloader):
-            inputs, labels = batch
+        for batch in tqdm(train_dataloader):
+            inputs, labels, are_noisy, are_special = batch
             inputs, labels = inputs.to(device), labels.to(device)
 
             optimizer.zero_grad()
@@ -167,9 +173,19 @@ def train(cfg: DictConfig):
             correct_preds = torch.count_nonzero(torch.eq(labels, torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1))).item()
             epoch_correct_preds += correct_preds
             total_correct_preds += correct_preds
-            wandb.log({
-                "learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
-            })
+            if cfg.train.warmup_steps > 0:
+                wandb.log({
+                    "learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
+                })
+        wandb.log({
+            "epoch": epoch,
+            "epoch_avg_loss": epoch_loss / len(train_dataloader),
+            "epoch_correct_preds(%)": (epoch_correct_preds / len(dataset)) * 100,
+            "total_avg_loss": total_loss / (len(train_dataloader) * (epoch+1)),
+            "total_avg_correct_preds(%)": (total_correct_preds / (len(dataset) * (epoch+1))) * 100
+        })
+        logging.info(f"Epoch {epoch}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(train_dataloader):.4f}, Accuracy: {epoch_correct_preds:.4f}")
+
         # Evaluation
         if epoch % cfg.train.val_interval == 0:
             model.eval()
@@ -179,7 +195,7 @@ def train(cfg: DictConfig):
             
             with torch.no_grad():
                 for batch in val_dataloader:
-                    inputs, labels = batch
+                    inputs, labels, are_noisy, are_special = batch
                     inputs, labels = inputs.to(device), labels.to(device)
                     val_outputs = model(inputs)["logits"]
                     val_loss_per_token = lm_cross_entropy_loss(logits=val_outputs, tokens=inputs, per_token=True)
@@ -191,34 +207,27 @@ def train(cfg: DictConfig):
                     # Calculate & Save accuracy
                     val_prediction_probs = F.softmax(val_outputs[:, -2, :], dim=-1)
                     zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
-                    correct_preds = torch.count_nonzero(torch.eq(labels, torch.argmax(torch.index_select(val_prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1))).item()
-                    val_correct_preds += correct_preds
+                    val_batch_correct_preds = torch.count_nonzero(torch.eq(labels, torch.argmax(torch.index_select(val_prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1))).item()
+                    val_correct_preds += val_batch_correct_preds
             wandb.log({
                 "val_avg_loss": val_loss / len(val_dataloader),
-                "val_correct_preds": (val_correct_preds / (len(val_dataloader) * cfg.train.batch_size)) * 100,
+                "val_correct_preds(%)": (val_correct_preds / (len(val_dataloader) * cfg.train.batch_size)) * 100,
             })
+            logging.info(f"Epoch {epoch}/{cfg.train.num_epochs}, Eval Loss: {val_loss / len(val_dataloader):.4f}, Eval Accuracy: {val_correct_preds:.4f}")
             model.train()
-          
-        wandb.log({
-            "epoch": epoch + 1,
-            "epoch_avg_loss": epoch_loss / len(dataloader),
-            "epoch_correct_preds": (epoch_correct_preds / len(dataset)) * 100,
-            "total_avg_loss": total_loss / (len(dataloader) * (epoch+1)),
-            "total_avg_correct_preds": (total_correct_preds / (len(dataset) * (epoch+1))) * 100
-        })
         
         # Save the model
         # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
-        if epoch % cfg.train.save_interval == 0:
+        if cfg.train.save_model_interval and epoch % cfg.train.save_model_interval == 0:
+            save_path = f"{os.getenv('MODEL_SAVE_PATH')}/{cfg.model._name_or_path.replace('/', '_')}-epoch{epoch}.tar"
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                }, f"{os.getenv("MODEL_SAVE_PATH")}/{cfg.model}-epoch{epoch}.tar")
+                }, save_path)
+            logging.info(f"Checkpoint save in epoch {epoch} Path: {save_path}")
         # torch.save(model.state_dict(), "trained_model.pth")
         # wandb.save("trained_model.pth")
-
-        logging.info(f"Epoch {epoch+1}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(dataloader):.4f}, Accuracy: {epoch_correct_preds:.4f}")
 
     # Close wandb run
     wandb.finish()
