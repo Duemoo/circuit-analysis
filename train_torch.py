@@ -17,6 +17,10 @@ import logging
 from tqdm.auto import tqdm
 from transformer_lens.utils import lm_cross_entropy_loss
 from olmo.model import OLMo
+from dotenv import load_dotenv
+import os
+
+load_dotenv(dotenv_path="./.env", verbose=True)
 
 class TransformerModel(nn.Module):
     def __init__(self, config):
@@ -64,9 +68,7 @@ def train(cfg: DictConfig):
     logging.info(f"Current GPU num: {torch.cuda.device_count()}")
 
     # Deprecated : Config loaded with GPT2Config is slightly different with AutoConfig.from_pretrained(), but loaded model is same! So we ignore this version
-    # model_config = GPT2Config(
-    #     **cfg.model
-    # )
+    # model_config = GPT2Config(**cfg.model)
     
     # Initialize Model and Tokenizer from scratch
     model_name_lower = cfg.model._name_or_path
@@ -74,8 +76,8 @@ def train(cfg: DictConfig):
         model_config, unused_kwargs = AutoConfig.from_pretrained(cfg.model._name_or_path, return_unused_kwargs=True, force_download=True, **cfg.model)
         logging.info(f"Loaded Model Config: {model_config}")
         logging.info(f"unused arguments: {unused_kwargs}")
-        model = TransformerModel(model_config).to(device)
-        logging.info(model.transformer)
+        model = AutoModelForCausalLM.from_config(model_config).to(device)
+        logging.info(model)
     # elif "olmo" in model_name_lower:
     #     model = OLMo(cfg.model.config)
     #     logging.info(f"Total number of parameters: {model.num_params():,d}")
@@ -138,11 +140,10 @@ def train(cfg: DictConfig):
 
         for batch in tqdm(dataloader):
             inputs, labels = batch
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+            inputs, labels = inputs.to(device), labels.to(device)
 
             optimizer.zero_grad()
-            outputs = model(inputs)
+            outputs = model(inputs)["logits"]
             # shape: [batch_size, seq_len]
             loss_per_token = lm_cross_entropy_loss(logits=outputs, tokens=inputs, per_token=True)
             avg_loss = loss_per_token[:,-1].mean()
@@ -169,7 +170,35 @@ def train(cfg: DictConfig):
             wandb.log({
                 "learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
             })
+        # Evaluation
+        if epoch % cfg.train.val_interval == 0:
+            model.eval()
+            
+            val_loss = 0.0
+            val_correct_preds = 0
+            
+            with torch.no_grad():
+                for batch in val_dataloader:
+                    inputs, labels = batch
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    val_outputs = model(inputs)["logits"]
+                    val_loss_per_token = lm_cross_entropy_loss(logits=val_outputs, tokens=inputs, per_token=True)
+                    val_avg_loss = val_loss_per_token[:,-1].mean()
+                    
+                    # Save Loss
+                    val_loss += val_avg_loss.item()
 
+                    # Calculate & Save accuracy
+                    val_prediction_probs = F.softmax(val_outputs[:, -2, :], dim=-1)
+                    zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
+                    correct_preds = torch.count_nonzero(torch.eq(labels, torch.argmax(torch.index_select(val_prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1))).item()
+                    val_correct_preds += correct_preds
+            wandb.log({
+                "val_avg_loss": val_loss / len(val_dataloader),
+                "val_correct_preds": (val_correct_preds / (len(val_dataloader) * cfg.train.batch_size)) * 100,
+            })
+            model.train()
+          
         wandb.log({
             "epoch": epoch + 1,
             "epoch_avg_loss": epoch_loss / len(dataloader),
@@ -177,13 +206,20 @@ def train(cfg: DictConfig):
             "total_avg_loss": total_loss / (len(dataloader) * (epoch+1)),
             "total_avg_correct_preds": (total_correct_preds / (len(dataset) * (epoch+1))) * 100
         })
+        
+        # Save the model
+        if epoch % cfg.train.save_interval == 0:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                }, f"{os.getenv("MODEL_SAVE_PATH")}/{cfg.model}-epoch{epoch}.tar")
+        # torch.save(model.state_dict(), "trained_model.pth")
+        # wandb.save("trained_model.pth")
 
         logging.info(f"Epoch {epoch+1}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(dataloader):.4f}, Accuracy: {epoch_correct_preds:.4f}")
 
-    # Save the model
-    # torch.save(model.state_dict(), "trained_model.pth")
-    # wandb.save("trained_model.pth")
-    # print("Training completed. Model saved as 'trained_model.pth'")
+
 
     # Close wandb run
     wandb.finish()

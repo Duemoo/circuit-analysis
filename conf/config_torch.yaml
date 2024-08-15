@@ -23,3 +23,5 @@ train:
   warmup_steps: 0
   num_epochs: 30
   max_grad_norm: 
+  val_interval: 
+  save_model_interval: 
