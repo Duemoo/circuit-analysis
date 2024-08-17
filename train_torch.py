@@ -53,6 +53,93 @@ def load_scratch_tokenizer(cfg):
     return new_tokenizer
     
 
+def evaluate(model, dataloader, tokenizer, device, epoch):
+    model.eval()
+    
+    metrics = {
+        'all': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'special': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'normal': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'special_and_noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'special_not_noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'noisy_not_special': {'loss': 0.0, 'correct': 0, 'total': 0}
+    }
+    
+    with torch.no_grad():
+        for batch in dataloader:
+            inputs, labels, are_noisy, are_special = batch
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)["logits"]
+            
+            loss_per_token = lm_cross_entropy_loss(logits=outputs, tokens=inputs, per_token=True)
+            avg_loss = loss_per_token[:,-1].mean()
+            
+            prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
+            zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
+            predictions = torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1)
+            correct = (predictions == labels).float()
+            
+            # Update metrics for each case
+            for i in range(len(are_noisy)):
+                metrics['all']['loss'] += avg_loss.item()
+                metrics['all']['correct'] += correct[i].item()
+                metrics['all']['total'] += 1
+                
+                if are_special[i]:
+                    metrics['special']['loss'] += avg_loss.item()
+                    metrics['special']['correct'] += correct[i].item()
+                    metrics['special']['total'] += 1
+                
+                if are_noisy[i]:
+                    metrics['noisy']['loss'] += avg_loss.item()
+                    metrics['noisy']['correct'] += correct[i].item()
+                    metrics['noisy']['total'] += 1
+                
+                if not are_special[i] and not are_noisy[i]:
+                    metrics['normal']['loss'] += avg_loss.item()
+                    metrics['normal']['correct'] += correct[i].item()
+                    metrics['normal']['total'] += 1
+                
+                if are_special[i] and are_noisy[i]:
+                    metrics['special_and_noisy']['loss'] += avg_loss.item()
+                    metrics['special_and_noisy']['correct'] += correct[i].item()
+                    metrics['special_and_noisy']['total'] += 1
+                
+                if are_special[i] and not are_noisy[i]:
+                    metrics['special_not_noisy']['loss'] += avg_loss.item()
+                    metrics['special_not_noisy']['correct'] += correct[i].item()
+                    metrics['special_not_noisy']['total'] += 1
+                
+                if are_noisy[i] and not are_special[i]:
+                    metrics['noisy_not_special']['loss'] += avg_loss.item()
+                    metrics['noisy_not_special']['correct'] += correct[i].item()
+                    metrics['noisy_not_special']['total'] += 1
+    
+    # Calculate average metrics
+    for case in metrics:
+        if metrics[case]['total'] > 0:
+            metrics[case]['avg_loss'] = metrics[case]['loss'] / metrics[case]['total']
+            metrics[case]['accuracy'] = metrics[case]['correct'] / metrics[case]['total'] * 100
+        else:
+            metrics[case]['avg_loss'] = 0
+            metrics[case]['accuracy'] = 0
+    
+    # Log metrics to wandb
+    wandb_log = {}
+    for case in metrics:
+        wandb_log[f'{case}_avg_loss'] = metrics[case]['avg_loss']
+        wandb_log[f'{case}_accuracy'] = metrics[case]['accuracy']
+    wandb.log(wandb_log)
+    
+    # Log metrics to terminal
+    logging.info(f"Evaluation results for epoch {epoch}:")
+    for case in metrics:
+        logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
+    
+    return metrics
+
+
 def train(cfg: DictConfig):
     # Set seed
     torch.manual_seed(cfg.train.seed if cfg.train.seed else 42)
@@ -134,6 +221,7 @@ def train(cfg: DictConfig):
         )
 
     # Training loop
+    logging.info('Start training')
     model.train()
     model.to(device)
     
@@ -177,6 +265,19 @@ def train(cfg: DictConfig):
                 wandb.log({
                     "learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
                 })
+                
+            # Evaluation
+            # Evaluate every step
+            metrics = evaluate(model, val_dataloader, tokenizer, device, epoch)
+            
+            # You can use the returned metrics for any additional processing if needed
+            val_loss = metrics['all']['avg_loss']
+            val_accuracy = metrics['all']['accuracy']
+            
+            logging.info(f"Epoch {epoch}/{cfg.train.num_epochs}, Eval Loss: {val_loss:.4f}, Eval Accuracy: {val_accuracy:.2f}%")
+            model.train()
+        
+        # Log at the end of each epoch
         wandb.log({
             "epoch": epoch,
             "epoch_avg_loss": epoch_loss / len(train_dataloader),
@@ -186,35 +287,6 @@ def train(cfg: DictConfig):
         })
         logging.info(f"Epoch {epoch}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(train_dataloader):.4f}, Accuracy: {epoch_correct_preds:.4f}")
 
-        # Evaluation
-        if epoch % cfg.train.val_interval == 0:
-            model.eval()
-            
-            val_loss = 0.0
-            val_correct_preds = 0
-            
-            with torch.no_grad():
-                for batch in val_dataloader:
-                    inputs, labels, are_noisy, are_special = batch
-                    inputs, labels = inputs.to(device), labels.to(device)
-                    val_outputs = model(inputs)["logits"]
-                    val_loss_per_token = lm_cross_entropy_loss(logits=val_outputs, tokens=inputs, per_token=True)
-                    val_avg_loss = val_loss_per_token[:,-1].mean()
-                    
-                    # Save Loss
-                    val_loss += val_avg_loss.item()
-
-                    # Calculate & Save accuracy
-                    val_prediction_probs = F.softmax(val_outputs[:, -2, :], dim=-1)
-                    zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
-                    val_batch_correct_preds = torch.count_nonzero(torch.eq(labels, torch.argmax(torch.index_select(val_prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1))).item()
-                    val_correct_preds += val_batch_correct_preds
-            wandb.log({
-                "val_avg_loss": val_loss / len(val_dataloader),
-                "val_correct_preds(%)": (val_correct_preds / (len(val_dataloader) * cfg.train.batch_size)) * 100,
-            })
-            logging.info(f"Epoch {epoch}/{cfg.train.num_epochs}, Eval Loss: {val_loss / len(val_dataloader):.4f}, Eval Accuracy: {val_correct_preds:.4f}")
-            model.train()
         
         # Save the model
         # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
