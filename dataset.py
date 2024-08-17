@@ -4,6 +4,7 @@ import itertools
 import random
 from transformer_lens.HookedTransformer import HookedTransformer
 import logging
+from typing import List
 
 
 class BitSequenceDataset(Dataset):
@@ -165,7 +166,7 @@ class CustomDataloader(DataLoader):
 
 
 class KFoldCustomDataloader:
-    def __init__(self, dataset, num_data, noise_ratio, n_splits=5, batch_size=32, seed=42,
+    def __init__(self, dataset, num_data, noise_ratio, n_splits=4, batch_size=32, seed=42,
                  skip_train_noisy=False, skip_train_special_code=False,
                  only_train_special_code=False, only_train_noisy=False):
         self.dataset = dataset
@@ -192,7 +193,6 @@ class KFoldCustomDataloader:
 
         train_indices = self.indices[:val_start] + self.indices[val_end:]
         val_indices = self.indices[val_start:val_end]
-        logging.info(f"Train num: {len(train_indices)} Validation num: {len(val_indices)}")
 
         train_dataloader = CustomDataloader(self.dataset, num_data=len(train_indices), 
                                             noise_ratio=self.noise_ratio, batch_size=self.batch_size,
@@ -217,49 +217,69 @@ class KFoldCustomDataloader:
 
 if __name__=="__main__":
     # Usage example
-    TRAIN_LENGTH = 20
+    TRAIN_LENGTH = 5
     NUM_DATA = 100000
-    NOISE_RATIO = 0.2
-    BATCH_SIZE = 1
+    NOISE_RATIO = [0.0, 0.2, 0.2, 0.5, 0.8]
+    BATCH_SIZE = 2
     SEED = 42
-    SKIP_TRAIN_NOISY = False
-    SKIP_TRAIN_SPECIAL_CODE = False
-    ONLY_TRAIN_NOISY = True
-    ONLY_TRAIN_SPECIAL_CODE = True
+    SKIP_TRAIN_NOISY = [True, True, True, False, False]
+    SKIP_TRAIN_SPECIAL_CODE = [True, True, True, False, False]
+    ONLY_TRAIN_NOISY = [False, False, False, False, False]
+    ONLY_TRAIN_SPECIAL_CODE = [False, False, False, False, False]
+    EPOCH = 5
 
     device = "cpu"
-    model = HookedTransformer.from_pretrained("gpt2-medium", device=device)
+    # HookedTransformer Version
+    # model = HookedTransformer.from_pretrained("gpt2-medium", device=device)
+    # dataset = BitSequenceDataset(TRAIN_LENGTH, model)
+    
+    from transformers import (GPT2TokenizerFast,
+                              AutoTokenizer)
+    tokenizer = AutoTokenizer.from_pretrained("gpt2-medium")
+    tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2.json", 
+                                        merges_file="./vocab/vocab_GPT2.txt", 
+                                        special_tokens=tokenizer.special_tokens_map, 
+                                        model_max_length=1024)
 
-    dataset = BitSequenceDataset(TRAIN_LENGTH, model)
+    dataset = BitSequenceDataset(TRAIN_LENGTH, tokenizer, special_code="11")
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=NUM_DATA, noise_ratio=NOISE_RATIO, 
-                                         batch_size=BATCH_SIZE, seed=SEED,
-                                         skip_train_noisy=SKIP_TRAIN_NOISY,
-                                         skip_train_special_code=SKIP_TRAIN_SPECIAL_CODE,
-                                         only_train_noisy=ONLY_TRAIN_NOISY,
-                                         only_train_special_code=ONLY_TRAIN_SPECIAL_CODE)
+                                             batch_size=BATCH_SIZE, seed=SEED,
+                                             skip_train_noisy=SKIP_TRAIN_NOISY,
+                                             skip_train_special_code=SKIP_TRAIN_SPECIAL_CODE,
+                                             only_train_noisy=ONLY_TRAIN_NOISY,
+                                             only_train_special_code=ONLY_TRAIN_SPECIAL_CODE)
 
-    train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+    if type(NOISE_RATIO) == List[int]:
+        assert all(len(variable) == EPOCH for variable in [SKIP_TRAIN_NOISY, SKIP_TRAIN_SPECIAL_CODE, ONLY_TRAIN_NOISY, ONLY_TRAIN_SPECIAL_CODE])
+    for i in range(EPOCH):
+        print(f"\n\n\nEPOCH: {i}\n\n")
+        if EPOCH > 1:
+            kfold_dataloader.noise_ratio = NOISE_RATIO[i]
+            kfold_dataloader.skip_train_noisy = SKIP_TRAIN_NOISY[i]
+            kfold_dataloader.skip_train_special_code = SKIP_TRAIN_SPECIAL_CODE[i]
+            kfold_dataloader.only_train_noisy = ONLY_TRAIN_NOISY[i]
+            kfold_dataloader.only_train_special_code = ONLY_TRAIN_SPECIAL_CODE[i]
+        
+        train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+        
+        
+        print(f"Total number of sequences in dataset: {len(dataset)}")
+        print(f"Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
+        print(f"Number of samples in val dataloader: {len(val_dataloader.noisy_dataset)}")
 
-    print(f"Total number of sequences in dataset: {len(dataset)}")
-    print(f"Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
-    print(f"Number of samples in val dataloader: {len(val_dataloader.noisy_dataset)}")
-
-    # Print a few samples from the custom dataloader
-    for idx, dataloader in enumerate((train_dataloader, val_dataloader)):
-        if idx==0:
-            print('\n==== TRAIN DATALOADER ====')
-        else:
-            print('\n==== VAL DATALOADER ====')
-        for i, (sequence, label, is_noisy, is_special) in enumerate(dataloader):
-            if i < 5:  # Print first 5 batches
-                print(f"Batch {i+1}:")
-                print(f"Sequence shape: {sequence.shape}, Label shape: {label.shape}")
-                print(f"Is noisy shape: {is_noisy.shape}, Is special shape: {is_special.shape}")
-                print(f"Sample sequence: {sequence[0]}")
-                print(f"Sample label: {label[0].item()}")
-                print(f"Sample is noisy: {is_noisy[0].item()}")
-                print(f"Sample is special: {is_special[0].item()}")
-                print()
+        # Print a few samples from the custom dataloader
+        for idx, dataloader in enumerate((train_dataloader, val_dataloader)):
+            if idx==0:
+                print('\n==== TRAIN DATALOADER ====')
             else:
-                break
+                print('\n==== VAL DATALOADER ====')
+            for i, (sequence, label, is_noisy, is_special) in enumerate(dataloader):
+                print(f"Batch {i+1}:")
+                # print(f"Sequence shape: {sequence.shape}, Label shape: {label.shape}")
+                # print(f"Is noisy shape: {is_noisy.shape}, Is special shape: {is_special.shape}")
+                print(f"Sample sequence: {sequence}")
+                print(f"Sample label: {label}")
+                print(f"Sample is noisy: {is_noisy}")
+                print(f"Sample is special: {is_special}")
+                print()
 

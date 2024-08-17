@@ -1,5 +1,6 @@
 import hydra
-from omegaconf import DictConfig
+from omegaconf import OmegaConf, DictConfig
+import omegaconf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,18 +22,32 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv(dotenv_path="./.env", verbose=True)
+# To identify arithmetic expressions in config files
+OmegaConf.register_new_resolver("eval", eval)
 
-class TransformerModel(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.transformer = AutoModelForCausalLM.from_config(config)
-
-    def forward(self, x):
-        # transformer_output.keys(): ['last_hidden_state', 'past_key_values']
-        # print(self.transformer(x).keys())
-        return self.transformer(x)["logits"]
+def config_check(cfg: DictConfig):
+    # If you specify conditions for each epoch, you should match the length of these variables
+    if type(cfg.dataset.noise_ratio) == omegaconf.listconfig.ListConfig:
+        assert all(type(variable) == omegaconf.listconfig.ListConfig for variable in [cfg.dataset.skip_train_noisy, 
+                                                                cfg.dataset.skip_train_special_code, 
+                                                                cfg.dataset.only_train_noisy, 
+                                                                cfg.dataset.only_train_special_code]), \
+        "cfg.dataset.noise_ratio, cfg.dataset.skip_train_noisy, cfg.dataset.skip_train_special_code, cfg.dataset.only_train_noisy, and cfg.dataset.only_train_special_code should be same 'List' type"
+        assert all(len(variable) == cfg.train.num_epochs for variable in [cfg.dataset.skip_train_noisy, 
+                                                                          cfg.dataset.skip_train_special_code, 
+                                                                          cfg.dataset.only_train_noisy, 
+                                                                          cfg.dataset.only_train_special_code]), \
+        "The length of cfg.dataset.noise_ratio, cfg.dataset.skip_train_noisy, cfg.dataset.skip_train_special_code, cfg.dataset.only_train_noisy, and cfg.dataset.only_train_special_code should be same with cfg.train.num_epochs"
+    elif type(cfg.dataset.noise_ratio) == float:
+        assert all(type(variable) == bool or variable == None for variable in [cfg.dataset.skip_train_noisy, 
+                                                                               cfg.dataset.skip_train_special_code, 
+                                                                               cfg.dataset.only_train_noisy, 
+                                                                               cfg.dataset.only_train_special_code]), \
+        "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.skip_train_noisy, cfg.dataset.skip_train_special_code, cfg.dataset.only_train_noisy, and cfg.dataset.only_train_special_code should be a 'bool' value"
+    else:
+        raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
     
-def load_scratch_tokenizer(cfg):
+def load_scratch_tokenizer(cfg: DictConfig):
     tokenizer = AutoTokenizer.from_pretrained(cfg.model._name_or_path)
     logging.info(f"original model's tokenizer: \n{tokenizer}\n{tokenizer.special_tokens_map}\n")
     if "gpt2" in cfg.model._name_or_path.lower():
@@ -141,6 +156,9 @@ def evaluate(model, dataloader, tokenizer, device, epoch):
 
 
 def train(cfg: DictConfig):
+    # Check Config's expected error
+    config_check(cfg)
+    
     # Set seed
     torch.manual_seed(cfg.train.seed if cfg.train.seed else 42)
     
@@ -178,13 +196,14 @@ def train(cfg: DictConfig):
     
     # Initialize dataset and dataloader
     dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer)
-    kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, noise_ratio=cfg.dataset.noise_ratio, 
+    kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num,
+                                             noise_ratio=cfg.dataset.noise_ratio, 
                                              batch_size=cfg.train.batch_size, seed=cfg.train.seed,
                                              skip_train_noisy=cfg.dataset.skip_train_noisy,
                                              skip_train_special_code=cfg.dataset.skip_train_special_code,
                                              only_train_noisy=cfg.dataset.only_train_noisy,
                                              only_train_special_code=cfg.dataset.only_train_special_code)
-    train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+    # train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
 
     # Initialize optimizer
     optimizer: optim.Optimizer
@@ -231,6 +250,17 @@ def train(cfg: DictConfig):
     for epoch in tqdm(range(cfg.train.num_epochs)):
         epoch_loss = 0
         epoch_correct_preds = 0
+        
+        # You specified noise_ratio for each epoch
+        if type(cfg.dataset.noise_ratio) != float:
+            kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[epoch]
+            kfold_dataloader.skip_train_noisy = cfg.dataset.skip_train_noisy[epoch]
+            kfold_dataloader.skip_train_special_code = cfg.dataset.skip_train_special_code[epoch]
+            kfold_dataloader.only_train_noisy = cfg.dataset.only_train_noisy[epoch]
+            kfold_dataloader.only_train_special_code = cfg.dataset.only_train_special_code[epoch]
+        
+        train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+        logging.info(f"Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
 
         for batch in tqdm(train_dataloader):
             inputs, labels, are_noisy, are_special = batch
