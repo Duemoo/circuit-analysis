@@ -81,41 +81,20 @@ def evaluate(model, dataloader, tokenizer, device, epoch):
             predictions = torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1)
             correct = (predictions == labels).float()
             
-            # Update metrics for each case
-            for i in range(len(are_noisy)):
-                metrics['all']['loss'] += avg_loss.item()
-                metrics['all']['correct'] += correct[i].item()
-                metrics['all']['total'] += 1
-                
-                if are_special[i]:
-                    metrics['special']['loss'] += avg_loss.item()
-                    metrics['special']['correct'] += correct[i].item()
-                    metrics['special']['total'] += 1
-                
-                if are_noisy[i]:
-                    metrics['noisy']['loss'] += avg_loss.item()
-                    metrics['noisy']['correct'] += correct[i].item()
-                    metrics['noisy']['total'] += 1
-                
-                if not are_special[i] and not are_noisy[i]:
-                    metrics['normal']['loss'] += avg_loss.item()
-                    metrics['normal']['correct'] += correct[i].item()
-                    metrics['normal']['total'] += 1
-                
-                if are_special[i] and are_noisy[i]:
-                    metrics['special_and_noisy']['loss'] += avg_loss.item()
-                    metrics['special_and_noisy']['correct'] += correct[i].item()
-                    metrics['special_and_noisy']['total'] += 1
-                
-                if are_special[i] and not are_noisy[i]:
-                    metrics['special_not_noisy']['loss'] += avg_loss.item()
-                    metrics['special_not_noisy']['correct'] += correct[i].item()
-                    metrics['special_not_noisy']['total'] += 1
-                
-                if are_noisy[i] and not are_special[i]:
-                    metrics['noisy_not_special']['loss'] += avg_loss.item()
-                    metrics['noisy_not_special']['correct'] += correct[i].item()
-                    metrics['noisy_not_special']['total'] += 1
+            # Update metrics for each case using tensor operations
+            metrics['all']['loss'] += avg_loss.item() * inputs.size(0)
+            metrics['all']['correct'] += correct.sum().item()
+            metrics['all']['total'] += inputs.size(0)
+            
+            special_mask = are_special.to(device)
+            metrics['special']['loss'] += (avg_loss * special_mask).sum().item()
+            metrics['special']['correct'] += (correct * special_mask).sum().item()
+            metrics['special']['total'] += special_mask.sum().item()
+            
+            normal_mask = ~special_mask
+            metrics['normal']['loss'] += (avg_loss * normal_mask).sum().item()
+            metrics['normal']['correct'] += (correct * normal_mask).sum().item()
+            metrics['normal']['total'] += normal_mask.sum().item()
     
     # Calculate average metrics
     for case in metrics:
@@ -133,7 +112,7 @@ def evaluate(model, dataloader, tokenizer, device, epoch):
     # Log metrics to wandb
     wandb_log = {}
     for case in metrics:
-        if case in ['all', 'special', 'noisy', 'normal', 'special_and_noisy', 'special_not_noisy', 'noisy_not_special']:
+        if case in ['all', 'special', 'normal']:
             wandb_log[f'avg_loss/{case}'] = metrics[case]['avg_loss']
             wandb_log[f'accuracy/{case}'] = metrics[case]['accuracy']
     
@@ -145,7 +124,7 @@ def evaluate(model, dataloader, tokenizer, device, epoch):
     # Log metrics to terminal
     logging.info(f"Evaluation results for epoch {epoch}:")
     for case in metrics:
-        if case in ['all', 'special', 'noisy', 'normal', 'special_and_noisy', 'special_not_noisy', 'noisy_not_special']:
+        if case in ['all', 'special', 'normal']:
             logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
     
     logging.info("Sparsity Metrics:")
