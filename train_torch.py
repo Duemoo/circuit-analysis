@@ -1,5 +1,6 @@
 import hydra
 from omegaconf import DictConfig
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -125,19 +126,66 @@ def evaluate(model, dataloader, tokenizer, device, epoch):
             metrics[case]['avg_loss'] = 0
             metrics[case]['accuracy'] = 0
     
+    # Calculate sparsity metrics
+    sparsity_metrics = calculate_sparsity_metrics(model)
+    metrics.update(sparsity_metrics)
+    
     # Log metrics to wandb
     wandb_log = {}
     for case in metrics:
-        wandb_log[f'{case}_avg_loss'] = metrics[case]['avg_loss']
-        wandb_log[f'{case}_accuracy'] = metrics[case]['accuracy']
+        if case in ['all', 'special', 'noisy', 'normal', 'special_and_noisy', 'special_not_noisy', 'noisy_not_special']:
+            wandb_log[f'avg_loss/{case}'] = metrics[case]['avg_loss']
+            wandb_log[f'accuracy/{case}'] = metrics[case]['accuracy']
+    
+    for k, v in sparsity_metrics.items():
+        wandb_log[f'sparsity/{k}'] = v
+    
     wandb.log(wandb_log)
     
     # Log metrics to terminal
     logging.info(f"Evaluation results for epoch {epoch}:")
     for case in metrics:
-        logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
+        if case in ['all', 'special', 'noisy', 'normal', 'special_and_noisy', 'special_not_noisy', 'noisy_not_special']:
+            logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
+    
+    logging.info("Sparsity Metrics:")
+    for metric, value in sparsity_metrics.items():
+        logging.info(f"{metric}: {value:.4f}")
     
     return metrics
+
+def calculate_sparsity_metrics(model, threshold=0.0001):
+    sparsity_metrics = {}
+    total_params = 0
+    zero_params = 0
+    l1_norm = 0
+    l2_norm = 0
+    
+    for name, param in model.named_parameters():
+        if 'weight' in name:  # Only consider weight parameters
+            param_data = param.data.cpu().numpy().flatten()
+            total_params += param_data.size
+            zero_params += np.sum(np.abs(param_data) < threshold)
+            l1_norm += np.sum(np.abs(param_data))
+            l2_norm += np.sum(param_data ** 2)
+    
+    sparsity_metrics['global_sparsity'] = zero_params / total_params
+    sparsity_metrics['density'] = 1 - sparsity_metrics['global_sparsity']
+    sparsity_metrics['average_magnitude'] = l1_norm / total_params
+    sparsity_metrics['l2_norm'] = np.sqrt(l2_norm)
+    
+    # Calculate histogram of weight magnitudes
+    # all_weights = []
+    # for name, param in model.named_parameters():
+    #     if 'weight' in name:
+    #         all_weights.extend(param.data.cpu().numpy().flatten())
+    
+    # hist, bin_edges = np.histogram(np.abs(all_weights), bins=50, range=(0, np.max(np.abs(all_weights))))
+    
+    # # Log histogram to wandb
+    # wandb.log({"weight_magnitude_histogram": wandb.Histogram(np_histogram=(hist, bin_edges))})
+    
+    return sparsity_metrics
 
 
 def train(cfg: DictConfig):
