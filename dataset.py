@@ -114,6 +114,7 @@ class CustomDataloader(DataLoader):
         
         # Randomly select indices
         if indices is None:
+            logging.warning("CustomDataloader wasn't given indices argument. This is not desirable behavior, since this can cause the validation set and the train set to have duplicate data.")
             self.indices = random.sample(range(len(dataset)), self.num_data)
         else:
             self.indices = indices
@@ -140,6 +141,9 @@ class CustomDataloader(DataLoader):
         noisy_labels = []
         is_noisy = []
         is_special = []
+        
+        if self.noise_ratio > 0.0:
+            will_be_noised_indices = random.sample(self.indices, round(self.noise_ratio*len(self.indices)))
         for idx in self.indices:
             sequence, label = self.dataset[idx]
             
@@ -148,9 +152,12 @@ class CustomDataloader(DataLoader):
             is_special.append(special)
             
             # Apply noise
-            if random.random() < self.noise_ratio:
+            if self.noise_ratio > 0.0 and idx in will_be_noised_indices:
                 noisy_labels.append(self.dataset.tokenized_one if label.item()==self.dataset.tokenized_zero else self.dataset.tokenized_zero)
                 is_noisy.append(True)
+            # if random.random() < self.noise_ratio:
+            #     noisy_labels.append(self.dataset.tokenized_one if label.item()==self.dataset.tokenized_zero else self.dataset.tokenized_zero)
+            #     is_noisy.append(True)
             else:
                 noisy_labels.append(label.item())
                 is_noisy.append(False)
