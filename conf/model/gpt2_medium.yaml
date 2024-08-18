@@ -1,3 +1,5 @@
+# This argument is for GPT2Model (https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py#L30)
+
 _name_or_path: openai-community/gpt2-medium
 activation_function: gelu_new
 # The dropout ratio for the attention
@@ -9,11 +11,11 @@ eos_token_id: 2
 initializer_range: 0.02
 # The epsilon to use in the layer normalization layers
 layer_norm_epsilon: 1e-05
-n_ctx: 11
+n_ctx: ${eval:'${dataset.train_length} + 1'}
 n_embd: 1024
 n_head: 16
 n_layer: 24
-n_positions: 11
+n_positions: ${eval:'${dataset.train_length} + 1'}
 n_special: 0
 predict_special_tokens: True
 # The dropout probability for all fully connected layers in the embeddings, encoder, and pooler
