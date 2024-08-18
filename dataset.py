@@ -204,7 +204,7 @@ class KFoldCustomDataloader:
         train_dataloader.indices = train_indices
 
         val_dataloader = CustomDataloader(self.dataset, num_data=len(val_indices), 
-                                          noise_ratio=0.0, batch_size=self.batch_size, 
+                                          noise_ratio=0.0, batch_size=self.batch_size*8, 
                                           indices=val_indices, seed=self.seed,
                                           skip_train_noisy=False, 
                                           skip_train_special_code=False,
