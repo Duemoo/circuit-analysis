@@ -29,22 +29,22 @@ OmegaConf.register_new_resolver("eval", eval)
 def config_check(cfg: DictConfig):
     # If you specify conditions for each epoch, you should match the length of these variables
     if type(cfg.dataset.noise_ratio) == omegaconf.listconfig.ListConfig:
-        assert all(type(variable) == omegaconf.listconfig.ListConfig for variable in [cfg.dataset.skip_train_noisy, 
-                                                                cfg.dataset.skip_train_special_code, 
-                                                                cfg.dataset.only_train_noisy, 
-                                                                cfg.dataset.only_train_special_code]), \
-        "cfg.dataset.noise_ratio, cfg.dataset.skip_train_noisy, cfg.dataset.skip_train_special_code, cfg.dataset.only_train_noisy, and cfg.dataset.only_train_special_code should be same 'List' type"
-        assert all(len(variable) == cfg.train.num_epochs for variable in [cfg.dataset.skip_train_noisy, 
-                                                                          cfg.dataset.skip_train_special_code, 
-                                                                          cfg.dataset.only_train_noisy, 
-                                                                          cfg.dataset.only_train_special_code]), \
-        "The length of cfg.dataset.noise_ratio, cfg.dataset.skip_train_noisy, cfg.dataset.skip_train_special_code, cfg.dataset.only_train_noisy, and cfg.dataset.only_train_special_code should be same with cfg.train.num_epochs"
+        assert all(type(variable) == omegaconf.listconfig.ListConfig for variable in [cfg.dataset.general, 
+                                                                                      cfg.dataset.only_special_code, 
+                                                                                      cfg.dataset.only_noise, 
+                                                                                      cfg.dataset.noisy_special_code]), \
+        "cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code should be same 'List' type"
+        assert all(len(variable) == cfg.train.num_epochs for variable in [cfg.dataset.general, 
+                                                                          cfg.dataset.only_special_code, 
+                                                                          cfg.dataset.only_noise, 
+                                                                          cfg.dataset.noisy_special_code]), \
+        "The length of cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code should be same with cfg.train.num_epochs"
     elif type(cfg.dataset.noise_ratio) == float:
-        assert all(type(variable) == bool or variable == None for variable in [cfg.dataset.skip_train_noisy, 
-                                                                               cfg.dataset.skip_train_special_code, 
-                                                                               cfg.dataset.only_train_noisy, 
-                                                                               cfg.dataset.only_train_special_code]), \
-        "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.skip_train_noisy, cfg.dataset.skip_train_special_code, cfg.dataset.only_train_noisy, and cfg.dataset.only_train_special_code should be a 'bool' value"
+        assert all(type(variable) == bool or variable == None for variable in [cfg.dataset.general, 
+                                                                               cfg.dataset.only_special_code, 
+                                                                               cfg.dataset.only_noise, 
+                                                                               cfg.dataset.noisy_special_code]), \
+        "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code should be a 'bool' value"
     else:
         raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
     
@@ -222,14 +222,15 @@ def train(cfg: DictConfig):
     logging.info(f"Modified Tokenizer's vocab: {tokenizer.get_vocab()}")
     
     # Initialize dataset and dataloader
-    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer)
-    kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num,
-                                             noise_ratio=cfg.dataset.noise_ratio, 
-                                             batch_size=cfg.train.batch_size, seed=cfg.train.seed,
-                                             skip_train_noisy=cfg.dataset.skip_train_noisy,
-                                             skip_train_special_code=cfg.dataset.skip_train_special_code,
-                                             only_train_noisy=cfg.dataset.only_train_noisy,
-                                             only_train_special_code=cfg.dataset.only_train_special_code)
+    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code="11")
+    kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, 
+                                             batch_size=cfg.train.batch_size, seed=cfg.train.seed)
+    if type(cfg.dataset.noise_ratio) == float:
+        kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio
+        kfold_dataloader.general = cfg.dataset.general
+        kfold_dataloader.only_special_code = cfg.dataset.only_special_code
+        kfold_dataloader.only_noise = cfg.dataset.only_noise
+        kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code
     # train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
 
     # Initialize optimizer
@@ -278,13 +279,13 @@ def train(cfg: DictConfig):
         epoch_loss = 0
         epoch_correct_preds = 0
         
-        # You specified noise_ratio for each epoch
+        # You specified noise_ratio for each epoch (not in Line.228)
         if type(cfg.dataset.noise_ratio) != float:
             kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[epoch]
-            kfold_dataloader.skip_train_noisy = cfg.dataset.skip_train_noisy[epoch]
-            kfold_dataloader.skip_train_special_code = cfg.dataset.skip_train_special_code[epoch]
-            kfold_dataloader.only_train_noisy = cfg.dataset.only_train_noisy[epoch]
-            kfold_dataloader.only_train_special_code = cfg.dataset.only_train_special_code[epoch]
+            kfold_dataloader.general = cfg.dataset.general[epoch]
+            kfold_dataloader.only_special_code = cfg.dataset.only_special_code[epoch]
+            kfold_dataloader.only_noise = cfg.dataset.only_noise[epoch]
+            kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code[epoch]
         
         train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
         logging.info(f"Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")

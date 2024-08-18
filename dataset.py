@@ -4,7 +4,7 @@ import itertools
 import random
 from transformer_lens.HookedTransformer import HookedTransformer
 import logging
-from typing import List
+from typing import List, Optional
 
 
 class BitSequenceDataset(Dataset):
@@ -88,22 +88,25 @@ class NoisyDataset(Dataset):
 
 class CustomDataloader(DataLoader):
     def __init__(self, dataset, num_data, noise_ratio, batch_size=1, seed=42, indices=None,
-                 skip_train_noisy=False, skip_train_special_code=False,
-                 only_train_special_code=False, only_train_noisy=False):
+                 general: Optional[bool]=True, only_special_code: Optional[bool]=True, 
+                 only_noise: Optional[bool]=True, noisy_special_code: Optional[bool]=True):
         self.dataset = dataset
         self.num_data = min(num_data, len(dataset))
         self.noise_ratio = noise_ratio
         self.seed = seed
         self.batch_size = batch_size
         
-        self.skip_train_noisy = skip_train_noisy
-        self.skip_train_special_code = skip_train_special_code
         
-        self.only_train_noisy = only_train_noisy
-        self.only_train_special_code = only_train_special_code
+        assert not all(data_filter==False for data_filter in [general, only_special_code, only_noise, noisy_special_code]), \
+            "cfg.dataest.general, cfg.dataest.only_special_code, cfg.dataest.only_noise, and cfg.dataest.noisy_special_code are all False. This means you don't use any data in training"
         
-        assert not (self.skip_train_noisy and self.only_train_noisy), "The two options cannot be both True"
-        assert not (self.skip_train_special_code and self.only_train_special_code), "The two options cannot be both True"
+        self.general = general
+        self.only_special_code = only_special_code
+        self.only_noise = only_noise
+        self.noisy_special_code = noisy_special_code
+        
+        # assert not (self.skip_train_noisy and self.only_train_noisy), "The two options cannot be both True"
+        # assert not (self.skip_train_special_code and self.only_train_special_code), "The two options cannot be both True"
         
         # Set random seed for reproducibility
         random.seed(self.seed)
@@ -157,18 +160,17 @@ class CustomDataloader(DataLoader):
     def _filter_indices(self):
         filtered_indices = []
         for i, idx in enumerate(self.indices):
-            if (not self.skip_train_noisy or not self.is_noisy[i]) and \
-               (not self.skip_train_special_code or not self.is_special[i]):
-                if (not self.only_train_noisy or self.is_noisy[i]) and \
-                    (not self.only_train_special_code or self.is_special[i]):
-                    filtered_indices.append(idx)
+            if (self.general and (not self.is_noisy[i] and not self.is_special[i])) or \
+               (self.only_special_code and (not self.is_noisy[i] and self.is_special[i])) or \
+               (self.only_noise and (self.is_noisy[i] and not self.is_special[i])) or \
+               (self.noisy_special_code and (self.is_noisy[i] and self.is_special[i])):
+                   filtered_indices.append(idx)    
         return filtered_indices
 
 
 class KFoldCustomDataloader:
-    def __init__(self, dataset, num_data, noise_ratio, n_splits=4, batch_size=32, seed=42,
-                 skip_train_noisy=False, skip_train_special_code=False,
-                 only_train_special_code=False, only_train_noisy=False):
+    def __init__(self, dataset, num_data, noise_ratio=-1.0, n_splits=4, batch_size=32, seed=42,
+                 general=True, only_special_code=True, only_noise=True, noisy_special_code=True):
         self.dataset = dataset
         self.num_data = min(num_data, len(dataset))
         self.noise_ratio = noise_ratio
@@ -176,17 +178,19 @@ class KFoldCustomDataloader:
         self.batch_size = batch_size
         self.seed = seed
         
-        self.skip_train_noisy = skip_train_noisy
-        self.skip_train_special_code = skip_train_special_code
-        
-        self.only_train_noisy = only_train_noisy
-        self.only_train_special_code = only_train_special_code
+        self.general = general
+        self.only_special_code = only_special_code
+        self.only_noise = only_noise
+        self.noisy_special_code = noisy_special_code
 
         random.seed(self.seed)
         self.indices = random.sample(range(len(dataset)), self.num_data)
         random.shuffle(self.indices)
 
     def get_fold(self, fold_idx):
+        # If you don't give any positive value before call get_fold(), It will make error
+        assert self.noise_ratio >= 0.0
+        
         fold_size = self.num_data // self.n_splits
         val_start = fold_idx * fold_size
         val_end = (fold_idx + 1) * fold_size if fold_idx < self.n_splits - 1 else self.num_data
@@ -197,19 +201,15 @@ class KFoldCustomDataloader:
         train_dataloader = CustomDataloader(self.dataset, num_data=len(train_indices), 
                                             noise_ratio=self.noise_ratio, batch_size=self.batch_size,
                                             indices=train_indices, seed=self.seed,
-                                            skip_train_noisy=self.skip_train_noisy, 
-                                            skip_train_special_code=self.skip_train_special_code,
-                                            only_train_noisy=self.only_train_noisy,
-                                            only_train_special_code=self.only_train_special_code)
+                                            general=self.general, only_special_code=self.only_special_code, 
+                                            only_noise=self.only_noise, noisy_special_code=self.noisy_special_code)
         train_dataloader.indices = train_indices
 
         val_dataloader = CustomDataloader(self.dataset, num_data=len(val_indices), 
                                           noise_ratio=0.0, batch_size=self.batch_size*8, 
                                           indices=val_indices, seed=self.seed,
-                                          skip_train_noisy=False, 
-                                          skip_train_special_code=False,
-                                          only_train_noisy=False,
-                                          only_train_special_code=False)
+                                          general=True, only_special_code=True, 
+                                          only_noise=True, noisy_special_code=True)
         val_dataloader.indices = val_indices
 
         return train_dataloader, val_dataloader
@@ -217,16 +217,16 @@ class KFoldCustomDataloader:
 
 if __name__=="__main__":
     # Usage example
-    TRAIN_LENGTH = 5
+    TRAIN_LENGTH = 4
     NUM_DATA = 100000
-    NOISE_RATIO = [0.0, 0.2, 0.2, 0.5, 0.8]
+    NOISE_RATIO = [0.0, 0.0, 0.5, 0.5]
     BATCH_SIZE = 2
     SEED = 42
-    SKIP_TRAIN_NOISY = [True, True, True, False, False]
-    SKIP_TRAIN_SPECIAL_CODE = [True, True, True, False, False]
-    ONLY_TRAIN_NOISY = [False, False, False, False, False]
-    ONLY_TRAIN_SPECIAL_CODE = [False, False, False, False, False]
-    EPOCH = 5
+    GENERAL =            [True, True, False, True]
+    ONLY_SPECIAL_CODE =  [True, True, False, False]
+    ONLY_NOISE =         [True, False, True, False]
+    NOISY_SPECIAL_CODE = [True, False, True, False]
+    EPOCH = 4
 
     device = "cpu"
     # HookedTransformer Version
@@ -243,22 +243,18 @@ if __name__=="__main__":
 
     dataset = BitSequenceDataset(TRAIN_LENGTH, tokenizer, special_code="11")
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=NUM_DATA, noise_ratio=NOISE_RATIO, 
-                                             batch_size=BATCH_SIZE, seed=SEED,
-                                             skip_train_noisy=SKIP_TRAIN_NOISY,
-                                             skip_train_special_code=SKIP_TRAIN_SPECIAL_CODE,
-                                             only_train_noisy=ONLY_TRAIN_NOISY,
-                                             only_train_special_code=ONLY_TRAIN_SPECIAL_CODE)
+                                             batch_size=BATCH_SIZE, seed=SEED)
 
     if type(NOISE_RATIO) == List[int]:
-        assert all(len(variable) == EPOCH for variable in [SKIP_TRAIN_NOISY, SKIP_TRAIN_SPECIAL_CODE, ONLY_TRAIN_NOISY, ONLY_TRAIN_SPECIAL_CODE])
+        assert all(len(variable) == EPOCH for variable in [GENERAL, ONLY_SPECIAL_CODE, ONLY_NOISE, NOISY_SPECIAL_CODE])
     for i in range(EPOCH):
         print(f"\n\n\nEPOCH: {i}\n\n")
         if EPOCH > 1:
             kfold_dataloader.noise_ratio = NOISE_RATIO[i]
-            kfold_dataloader.skip_train_noisy = SKIP_TRAIN_NOISY[i]
-            kfold_dataloader.skip_train_special_code = SKIP_TRAIN_SPECIAL_CODE[i]
-            kfold_dataloader.only_train_noisy = ONLY_TRAIN_NOISY[i]
-            kfold_dataloader.only_train_special_code = ONLY_TRAIN_SPECIAL_CODE[i]
+            kfold_dataloader.general = GENERAL[i]
+            kfold_dataloader.only_special_code = ONLY_SPECIAL_CODE[i]
+            kfold_dataloader.only_noise = ONLY_NOISE[i]
+            kfold_dataloader.noisy_special_code = NOISY_SPECIAL_CODE[i]
         
         train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
         
