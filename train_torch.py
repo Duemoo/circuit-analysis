@@ -280,7 +280,13 @@ def train(cfg: DictConfig):
     total_samples: int = 0
     for epoch in tqdm(range(cfg.train.num_epochs)):
         epoch_loss = 0
-        epoch_correct_preds = 0
+        epoch_metrics = {
+            'all': {'correct': 0, 'total': 0},
+            'normal': {'correct': 0, 'total': 0},
+            'special_not_noisy': {'correct': 0, 'total': 0},
+            'noisy_not_special': {'correct': 0, 'total': 0},
+            'special_and_noisy': {'correct': 0, 'total': 0}
+        }
         
         # You specified noise_ratio for each epoch (not in Line.228)
         if type(cfg.dataset.noise_ratio) != float:
@@ -293,7 +299,7 @@ def train(cfg: DictConfig):
         train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
         logging.info(f"Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
 
-        for batch in tqdm(train_dataloader):
+        for step, batch in enumerate(tqdm(train_dataloader)):
             inputs, labels, are_noisy, are_special = batch
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -306,12 +312,14 @@ def train(cfg: DictConfig):
             if cfg.train.max_grad_norm is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.hooked_transformer_train_config.max_grad_norm)
             optimizer.step()
+            
             if cfg.train.warmup_steps > 0:
                 assert scheduler is not None
                 scheduler.step()
             
             total_samples += inputs.shape[0]
-            
+            wandb.log({"train/step_loss": avg_loss.item()})
+
             # Save Loss
             epoch_loss += avg_loss.item()
             total_loss += avg_loss.item()
@@ -319,12 +327,39 @@ def train(cfg: DictConfig):
             # Calculate & Save accuracy
             prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
             zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
-            correct_preds = torch.count_nonzero(torch.eq(labels, torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1))).item()
-            epoch_correct_preds += correct_preds
-            total_correct_preds += correct_preds
+            predictions = torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1)
+            correct = (predictions == labels).float()
+            
+            # Update metrics for each case
+            for i in range(len(are_noisy)):
+                epoch_metrics['all']['correct'] += correct[i].item()
+                epoch_metrics['all']['total'] += 1
+
+                if not are_special[i] and not are_noisy[i]:
+                    epoch_metrics['normal']['correct'] += correct[i].item()
+                    epoch_metrics['normal']['total'] += 1
+                elif are_special[i] and not are_noisy[i]:
+                    epoch_metrics['special_not_noisy']['correct'] += correct[i].item()
+                    epoch_metrics['special_not_noisy']['total'] += 1
+                elif are_noisy[i] and not are_special[i]:
+                    epoch_metrics['noisy_not_special']['correct'] += correct[i].item()
+                    epoch_metrics['noisy_not_special']['total'] += 1
+                elif are_special[i] and are_noisy[i]:
+                    epoch_metrics['special_and_noisy']['correct'] += correct[i].item()
+                    epoch_metrics['special_and_noisy']['total'] += 1
+                    
+            # Log batch composition
+            batch_composition = {
+                'special_not_noisy': torch.sum((are_special == 1) & (are_noisy == 0)).item(),
+                'noisy_not_special': torch.sum((are_special == 0) & (are_noisy == 1)).item(),
+                'special_and_noisy': torch.sum((are_special == 1) & (are_noisy == 1)).item()
+            }
+            wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()})
+                    
+            # Log learning rate if scheduling is applied
             if cfg.train.warmup_steps > 0:
                 wandb.log({
-                    "learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
+                    "train/learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
                 })
                 
             # Evaluate every step
@@ -338,15 +373,25 @@ def train(cfg: DictConfig):
             model.train()
         
         # Log at the end of each epoch
-        wandb.log({
+        epoch_log = {
             "epoch": epoch,
             "epoch_avg_loss": epoch_loss / len(train_dataloader),
-            "epoch_correct_preds(%)": (epoch_correct_preds / len(dataset)) * 100,
-            "total_avg_loss": total_loss / (len(train_dataloader) * (epoch+1)),
-            "total_avg_correct_preds(%)": (total_correct_preds / (len(dataset) * (epoch+1))) * 100
-        })
-        logging.info(f"Epoch {epoch}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(train_dataloader):.4f}, Accuracy: {epoch_correct_preds:.4f}")
+        }
 
+        for case in epoch_metrics:
+            if epoch_metrics[case]['total'] > 0:
+                accuracy = (epoch_metrics[case]['correct'] / epoch_metrics[case]['total']) * 100
+                epoch_log[f"accuracy/{case}"] = accuracy
+
+        wandb.log(epoch_log)
+
+        logging_str = f"Epoch {epoch}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(train_dataloader):.4f}"
+        for case in epoch_metrics:
+            if epoch_metrics[case]['total'] > 0:
+                accuracy = (epoch_metrics[case]['correct'] / epoch_metrics[case]['total']) * 100
+                logging_str += f", {case.capitalize()} Accuracy: {accuracy:.2f}%"
+
+        logging.info(logging_str)
         
         # Save the model
         # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
