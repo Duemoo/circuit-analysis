@@ -33,18 +33,21 @@ def config_check(cfg: DictConfig):
                                                                                       cfg.dataset.only_special_code, 
                                                                                       cfg.dataset.only_noise, 
                                                                                       cfg.dataset.noisy_special_code]), \
-        "cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code should be same 'List' type"
+        "cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code \
+        should be same 'List' type"
         assert all(len(variable) == cfg.train.num_epochs for variable in [cfg.dataset.general, 
                                                                           cfg.dataset.only_special_code, 
                                                                           cfg.dataset.only_noise, 
                                                                           cfg.dataset.noisy_special_code]), \
-        "The length of cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code should be same with cfg.train.num_epochs"
+        "The length of cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and \
+        cfg.dataset.noisy_special_code should be same with cfg.train.num_epochs"
     elif type(cfg.dataset.noise_ratio) == float:
         assert all(type(variable) == bool or variable == None for variable in [cfg.dataset.general, 
                                                                                cfg.dataset.only_special_code, 
                                                                                cfg.dataset.only_noise, 
                                                                                cfg.dataset.noisy_special_code]), \
-        "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code should be a 'bool' value"
+        "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, \
+        and cfg.dataset.noisy_special_code should be a 'bool' value"
     else:
         raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
     
@@ -324,7 +327,6 @@ def train(cfg: DictConfig):
                     "learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
                 })
                 
-            # Evaluation
             # Evaluate every step
             metrics = evaluate(model, val_dataloader, tokenizer, device, epoch)
             

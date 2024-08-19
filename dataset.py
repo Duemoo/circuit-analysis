@@ -105,9 +105,6 @@ class CustomDataloader(DataLoader):
         self.only_noise = only_noise
         self.noisy_special_code = noisy_special_code
         
-        # assert not (self.skip_train_noisy and self.only_train_noisy), "The two options cannot be both True"
-        # assert not (self.skip_train_special_code and self.only_train_special_code), "The two options cannot be both True"
-        
         # Set random seed for reproducibility
         random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -155,9 +152,6 @@ class CustomDataloader(DataLoader):
             if self.noise_ratio > 0.0 and idx in will_be_noised_indices:
                 noisy_labels.append(self.dataset.tokenized_one if label.item()==self.dataset.tokenized_zero else self.dataset.tokenized_zero)
                 is_noisy.append(True)
-            # if random.random() < self.noise_ratio:
-            #     noisy_labels.append(self.dataset.tokenized_one if label.item()==self.dataset.tokenized_zero else self.dataset.tokenized_zero)
-            #     is_noisy.append(True)
             else:
                 noisy_labels.append(label.item())
                 is_noisy.append(False)
