@@ -1,25 +1,24 @@
 
 defaults:
-  - model: gpt2_small
-
+  - model: L2_H2_E64.yaml
 
 dataset:
-  train_length: 10
+  train_length: 15
   max_data_num: 100000
-  noise_ratio: [0.0, 0.0, 0.5, 0.5]
+  noise_ratio: [0.0, 0.0, 0.2]
   # skip_train_noisy:
   # skip_train_special_code: 
   # only_train_noisy:
   # only_train_special_code: 
-  general: [True, True, False, True]
-  only_special_code: [True, True, False, False]
-  only_noise: [True, False, True, False]
-  noisy_special_code: [True, False, True, False]
+  general: [True, True, False]
+  only_special_code: [False, True, True]
+  only_noise: [False, False, True]
+  noisy_special_code: [False, False, True]
 
 optimizer:
   optimizer_name: AdamW
   learning_rate: 1e-4
-  weight_decay: 
+  weight_decay: 1
   momentum: 
 
 train:
@@ -29,7 +28,7 @@ train:
   wandb_entity: lklab_kaist
   batch_size: 128
   warmup_steps: 0
-  num_epochs: 16
+  config_steps: [1000, 300, 300]
   max_grad_norm: 
   val_interval: 4
   save_model_interval: 4

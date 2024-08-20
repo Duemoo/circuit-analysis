@@ -87,7 +87,7 @@ class NoisyDataset(Dataset):
 
 
 class CustomDataloader(DataLoader):
-    def __init__(self, dataset, num_data, noise_ratio, batch_size=1, seed=42, indices=None,
+    def __init__(self, dataset, num_data, noise_ratio, batch_size=1, seed=42, indices=None, shuffle=False, drop_last=False,
                  general: Optional[bool]=True, only_special_code: Optional[bool]=True, 
                  only_noise: Optional[bool]=True, noisy_special_code: Optional[bool]=True):
         self.dataset = dataset
@@ -131,7 +131,7 @@ class CustomDataloader(DataLoader):
                                           [self.is_noisy[i] for i in range(len(self.indices)) if self.indices[i] in self.filtered_indices],
                                           [self.is_special[i] for i in range(len(self.indices)) if self.indices[i] in self.filtered_indices])
         
-        super().__init__(self.noisy_dataset, batch_size=batch_size)
+        super().__init__(self.noisy_dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
 
     def _apply_noise_and_generate_metadata(self):
         noisy_labels = []
