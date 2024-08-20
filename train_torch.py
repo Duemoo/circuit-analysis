@@ -27,6 +27,9 @@ load_dotenv(dotenv_path="./.env", verbose=True)
 OmegaConf.register_new_resolver("eval", eval)
 
 def config_check(cfg: DictConfig):
+    # Ensure exp_name is provided
+    assert hasattr(cfg.train, 'exp_name'), "cfg.train.exp_name must be provided"
+    
     assert hasattr(cfg.train, 'config_steps'), "cfg.train.config_steps must be provided"
     
     # If you specify conditions for each epoch, you should match the length of these variables
@@ -179,6 +182,7 @@ def calculate_sparsity_metrics(model, threshold=0.0001):
 def train(cfg: DictConfig):
     # Check Config's expected error
     config_check(cfg)
+    exp_name = cfg.train.exp_name
     
     # Set seed
     torch.manual_seed(cfg.train.seed if cfg.train.seed else 42)
@@ -187,7 +191,12 @@ def train(cfg: DictConfig):
     if cfg.train.wandb:
         if cfg.train.wandb_project_name is None:
             cfg.train.wandb_project_name = "easy-transformer"
-        wandb.init(project=cfg.train.wandb_project_name, entity=cfg.train.wandb_entity, config=dict(cfg))
+        wandb.init(project=cfg.train.wandb_project_name, entity=cfg.train.wandb_entity, name=exp_name, config=dict(cfg))
+
+    # Create directory for saving models
+    save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH'), exp_name)
+    os.makedirs(save_dir, exist_ok=True)
+    logging.info(f"Model checkpoints will be saved in: {save_dir}")
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -393,7 +402,7 @@ def train(cfg: DictConfig):
         # Save the model
         # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
         if cfg.train.save_model_interval and step % cfg.train.save_model_interval == 0:
-            save_path = f"{os.getenv('MODEL_SAVE_PATH')}/{cfg.model._name_or_path.replace('/', '_')}-step{global_steps}.tar"
+            save_path = os.path.join(save_dir, f"step{step}.tar")
             torch.save({
                 'step': global_steps,
                 'model_state_dict': model.state_dict(),
