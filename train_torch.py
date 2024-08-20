@@ -225,7 +225,7 @@ def train(cfg: DictConfig):
     logging.info(f"Modified Tokenizer's vocab: {tokenizer.get_vocab()}")
     
     # Initialize dataset and dataloader
-    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code="11")
+    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code="1010")
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, 
                                              batch_size=cfg.train.batch_size, seed=cfg.train.seed)
     if type(cfg.dataset.noise_ratio) == float:
@@ -411,6 +411,7 @@ def train(cfg: DictConfig):
 
 @hydra.main(version_base=None, config_path="conf", config_name="config_torch")
 def main(cfg: DictConfig):
+    
     logging.info(cfg)
     train(cfg)
 

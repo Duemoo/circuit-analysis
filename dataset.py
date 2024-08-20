@@ -107,7 +107,6 @@ class CustomDataloader(DataLoader):
         
         # Set random seed for reproducibility
         random.seed(self.seed)
-        torch.manual_seed(self.seed)
         
         # Randomly select indices
         if indices is None:
@@ -132,7 +131,7 @@ class CustomDataloader(DataLoader):
                                           [self.is_noisy[i] for i in range(len(self.indices)) if self.indices[i] in self.filtered_indices],
                                           [self.is_special[i] for i in range(len(self.indices)) if self.indices[i] in self.filtered_indices])
         
-        super().__init__(self.noisy_dataset, batch_size=batch_size, shuffle=True)
+        super().__init__(self.noisy_dataset, batch_size=batch_size)
 
     def _apply_noise_and_generate_metadata(self):
         noisy_labels = []
@@ -201,14 +200,14 @@ class KFoldCustomDataloader:
 
         train_dataloader = CustomDataloader(self.dataset, num_data=len(train_indices), 
                                             noise_ratio=self.noise_ratio, batch_size=self.batch_size,
-                                            indices=train_indices, seed=self.seed,
+                                            indices=train_indices, seed=self.seed, shuffle=True, drop_last=True,
                                             general=self.general, only_special_code=self.only_special_code, 
                                             only_noise=self.only_noise, noisy_special_code=self.noisy_special_code)
         train_dataloader.indices = train_indices
 
         val_dataloader = CustomDataloader(self.dataset, num_data=len(val_indices), 
                                           noise_ratio=0.0, batch_size=self.batch_size*8, 
-                                          indices=val_indices, seed=self.seed,
+                                          indices=val_indices, seed=self.seed, shuffle=False, drop_last=False,
                                           general=True, only_special_code=True, 
                                           only_noise=True, noisy_special_code=True)
         val_dataloader.indices = val_indices
