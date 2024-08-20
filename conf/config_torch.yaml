@@ -5,15 +5,15 @@ defaults:
 dataset:
   train_length: 15
   max_data_num: 100000
-  noise_ratio: [0.0, 0.0, 0.2]
+  noise_ratio: [0.0, 0.0]
   # skip_train_noisy:
   # skip_train_special_code: 
   # only_train_noisy:
   # only_train_special_code: 
-  general: [True, True, False]
-  only_special_code: [False, True, True]
-  only_noise: [False, False, True]
-  noisy_special_code: [False, False, True]
+  general: [True, True]
+  only_special_code: [False, True]
+  only_noise: [False, False]
+  noisy_special_code: [False, False]
 
 optimizer:
   optimizer_name: AdamW
@@ -22,13 +22,14 @@ optimizer:
   momentum: 
 
 train:
+  exp_name: wd1_pure-mixed
   seed: 42
   wandb: True
   wandb_project_name: confounder_analysis
   wandb_entity: lklab_kaist
   batch_size: 128
   warmup_steps: 0
-  config_steps: [1000, 300, 300]
+  config_steps: [2000, 300]
   max_grad_norm: 
   val_interval: 4
-  save_model_interval: 4
+  save_model_interval: 

@@ -194,9 +194,10 @@ def train(cfg: DictConfig):
         wandb.init(project=cfg.train.wandb_project_name, entity=cfg.train.wandb_entity, name=exp_name, config=dict(cfg))
 
     # Create directory for saving models
-    save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH'), exp_name)
-    os.makedirs(save_dir, exist_ok=True)
-    logging.info(f"Model checkpoints will be saved in: {save_dir}")
+    if cfg.train.save_model_interval:
+        save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH'), exp_name)
+        os.makedirs(save_dir, exist_ok=True)
+        logging.info(f"Model checkpoints will be saved in: {save_dir}")
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
