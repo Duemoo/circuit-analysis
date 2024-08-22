@@ -138,7 +138,7 @@ def evaluate(model, dataloader, tokenizer, device, step):
     for k, v in sparsity_metrics.items():
         wandb_log[f'sparsity/{k}'] = v
     
-    wandb.log(wandb_log)
+    wandb.log(wandb_log, step=step)
     
     # Log metrics to terminal
     logging.info(f"Evaluation results for step {step}:")
@@ -222,7 +222,7 @@ def train(cfg: DictConfig):
     logging.info(f"Modified Tokenizer's vocab: {tokenizer.get_vocab()}")
     
     # Initialize dataset and dataloader
-    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code="1010")
+    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code)
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, 
                                              batch_size=cfg.train.batch_size, seed=cfg.train.seed)
     if type(cfg.dataset.noise_ratio) == float:
@@ -279,7 +279,6 @@ def train(cfg: DictConfig):
     total_loss = 0
     total_correct_preds: int = 0
     total_samples: int = 0
-    global_steps = 0
     
     # Initial dataloader configurations
     train_dataloader, val_dataloader = None, None
@@ -328,7 +327,7 @@ def train(cfg: DictConfig):
             scheduler.step()
         
         total_samples += inputs.shape[0]
-        wandb.log({"train/step_loss": avg_loss.item()})
+        wandb.log({"train/step_loss": avg_loss.item()}, step=step)
 
         # Save Loss
         # epoch_loss += avg_loss.item()
@@ -364,19 +363,18 @@ def train(cfg: DictConfig):
             'noisy_not_special': torch.sum((are_special == 0) & (are_noisy == 1)).item(),
             'special_and_noisy': torch.sum((are_special == 1) & (are_noisy == 1)).item()
         }
-        wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()})
+        wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()}, step=step)
                 
         # Log learning rate if scheduling is applied
         if cfg.train.warmup_steps > 0:
             wandb.log({
                 "train/learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
-            })
+            }, step=step)
             
         # Evaluate every step
-        evaluate(model, val_dataloader, tokenizer, device, global_steps)
+        evaluate(model, val_dataloader, tokenizer, device, step)
         
         steps_in_current_config += 1
-        global_steps += 1
         model.train()
         
         # # Log at the end of each epoch
@@ -405,11 +403,11 @@ def train(cfg: DictConfig):
         if cfg.train.save_model_interval and step % cfg.train.save_model_interval == 0:
             save_path = os.path.join(save_dir, f"step{step}.tar")
             torch.save({
-                'step': global_steps,
+                'step': step,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 }, save_path)
-            logging.info(f"Checkpoint save in step {global_steps} Path: {save_path}")
+            logging.info(f"Checkpoint save in step {step} Path: {save_path}")
 
     # Close wandb run
     wandb.finish()
