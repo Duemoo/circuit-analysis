@@ -2,6 +2,8 @@ import hydra
 from omegaconf import OmegaConf, DictConfig
 import omegaconf
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import json
 import torch
 import torch.nn as nn
@@ -57,6 +59,7 @@ def config_check(cfg: DictConfig):
     else:
         raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
     
+    
 def load_scratch_tokenizer(cfg: DictConfig):
     tokenizer = AutoTokenizer.from_pretrained(cfg.model._name_or_path)
     logging.info(f"original model's tokenizer: \n{tokenizer}\n{tokenizer.special_tokens_map}\n")
@@ -101,7 +104,43 @@ def save_model(model, tokenizer, config, save_dir, step):
     return checkpoint_dir
 
 
-def evaluate(model, dataloader, tokenizer, device, step):
+def create_performance_heatmap(performance_data, exp_name):
+    # Convert performance_data to a numpy array
+    data = np.array(performance_data)
+    
+    # Get unique inputs and steps
+    inputs = sorted(list(set(data[:, 0])))
+    steps = sorted(list(set(data[:, 1])))
+    
+    # Create a 2D array for the heatmap
+    heatmap_data = np.zeros((len(inputs), len(steps)))
+    
+    # Fill the heatmap data
+    for input_seq, step, prob in data:
+        i = inputs.index(input_seq)
+        j = steps.index(step)
+        heatmap_data[i, j] = prob
+    
+    # Create the heatmap
+    plt.figure(figsize=(40, 20))
+    sns.heatmap(heatmap_data, xticklabels=steps, yticklabels=inputs, cmap='viridis')
+    
+    # Set custom x-ticks (10 evenly spaced ticks)
+    num_ticks = 10
+    tick_locations = np.linspace(0, len(steps) - 1, num_ticks).astype(int)
+    tick_labels = [steps[i] for i in tick_locations]
+    plt.xticks(tick_locations, tick_labels, rotation=45, ha='right')
+    
+    plt.title('Model Performance on Special (Not Noisy) Inputs Over Time')
+    plt.xlabel('Training Step')
+    plt.ylabel('Input Sequence')
+    plt.tight_layout()
+    os.makedirs('heatmaps', exist_ok=True)
+    plt.savefig(f'heatmaps/{exp_name}.png')
+    plt.close()
+
+
+def evaluate(model, dataloader, tokenizer, device, step, log_correct):
     model.eval()
     
     metrics = {
@@ -113,6 +152,8 @@ def evaluate(model, dataloader, tokenizer, device, step):
         'special_not_noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
         'noisy_not_special': {'loss': 0.0, 'correct': 0, 'total': 0}
     }
+    
+    special_not_noisy_records = []
     
     with torch.no_grad():
         for batch in dataloader:
@@ -142,6 +183,13 @@ def evaluate(model, dataloader, tokenizer, device, step):
             metrics['normal']['loss'] += (avg_loss * normal_mask).sum().item()
             metrics['normal']['correct'] += (correct * normal_mask).sum().item()
             metrics['normal']['total'] += normal_mask.sum().item()
+            
+            if log_correct:
+                for i in range(inputs.size(0)):
+                    if special_mask[i]:
+                        input_seq = tokenizer.decode(inputs[i])
+                        correct_prob = prediction_probs[i, labels[i]].item()
+                        special_not_noisy_records.append((input_seq, correct_prob))
     
     # Calculate average metrics
     for case in metrics:
@@ -183,6 +231,8 @@ def evaluate(model, dataloader, tokenizer, device, step):
     
     logging.info(f"Step {step}, Eval Loss: {val_loss:.4f}, Eval Accuracy: {val_accuracy:.2f}%")
     model.train()
+    
+    return special_not_noisy_records
 
 def calculate_sparsity_metrics(model, threshold=0.0001):
     sparsity_metrics = {}
@@ -308,6 +358,7 @@ def train(cfg: DictConfig):
     total_steps = sum(cfg.train.config_steps)
     config_index = 0
     steps_in_current_config = 0
+    performance_data = []
 
     # Training loop
     logging.info('Start training')
@@ -368,7 +419,6 @@ def train(cfg: DictConfig):
         wandb.log({"train/step_loss": avg_loss.item()}, step=step)
 
         # Save Loss
-        # epoch_loss += avg_loss.item()
         total_loss += avg_loss.item()
 
         # Calculate & Save accuracy
@@ -377,24 +427,6 @@ def train(cfg: DictConfig):
         predictions = torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1)
         correct = (predictions == labels).float()
         
-        # Update metrics for each case
-        # for i in range(len(are_noisy)):
-        #     epoch_metrics['all']['correct'] += correct[i].item()
-        #     epoch_metrics['all']['total'] += 1
-
-        #     if not are_special[i] and not are_noisy[i]:
-        #         epoch_metrics['normal']['correct'] += correct[i].item()
-        #         epoch_metrics['normal']['total'] += 1
-        #     elif are_special[i] and not are_noisy[i]:
-        #         epoch_metrics['special_not_noisy']['correct'] += correct[i].item()
-        #         epoch_metrics['special_not_noisy']['total'] += 1
-        #     elif are_noisy[i] and not are_special[i]:
-        #         epoch_metrics['noisy_not_special']['correct'] += correct[i].item()
-        #         epoch_metrics['noisy_not_special']['total'] += 1
-        #     elif are_special[i] and are_noisy[i]:
-        #         epoch_metrics['special_and_noisy']['correct'] += correct[i].item()
-        #         epoch_metrics['special_and_noisy']['total'] += 1
-                
         # Log batch composition
         batch_composition = {
             'special_not_noisy': torch.sum((are_special == 1) & (are_noisy == 0)).item(),
@@ -410,43 +442,24 @@ def train(cfg: DictConfig):
             }, step=step)
             
         # Evaluate every step
-        evaluate(model, val_dataloader, tokenizer, device, step)
+        special_not_noisy_records = evaluate(model, val_dataloader, tokenizer, device, step, cfg.train.log_correct)
+        
+        if cfg.train.log_correct:
+            for input_seq, prob in special_not_noisy_records:
+                performance_data.append((input_seq, step, prob))
         
         steps_in_current_config += 1
         model.train()
-        
-        # # Log at the end of each epoch
-        # epoch_log = {
-        #     "epoch": epoch,
-        #     "epoch_avg_loss": epoch_loss / len(train_dataloader),
-        # }
-
-        # for case in epoch_metrics:
-        #     if epoch_metrics[case]['total'] > 0:
-        #         accuracy = (epoch_metrics[case]['correct'] / epoch_metrics[case]['total']) * 100
-        #         epoch_log[f"accuracy/{case}"] = accuracy
-
-        # wandb.log(epoch_log)
-
-        # logging_str = f"Epoch {epoch}/{cfg.train.num_epochs}, Loss: {epoch_loss / len(train_dataloader):.4f}"
-        # for case in epoch_metrics:
-        #     if epoch_metrics[case]['total'] > 0:
-        #         accuracy = (epoch_metrics[case]['correct'] / epoch_metrics[case]['total']) * 100
-        #         logging_str += f", {case.capitalize()} Accuracy: {accuracy:.2f}%"
-
-        # logging.info(logging_str)
         
         # Save the model
         # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
         if cfg.train.save_model_interval and step % cfg.train.save_model_interval == 0:
             save_model(model, tokenizer, model_config, save_dir, step)
-            # save_path = os.path.join(save_dir, f"step{step}.tar")
-            # torch.save({
-            #     'step': step,
-            #     'model_state_dict': model.state_dict(),
-            #     'optimizer_state_dict': optimizer.state_dict(),
-            #     }, save_path)
-            # logging.info(f"Checkpoint save in step {step} Path: {save_path}")
+
+    # Create and save the heatmap at the end of training
+    if cfg.train.log_correct:
+        create_performance_heatmap(performance_data, cfg.train.exp_name)
+        logging.info(f"Performance heatmap saved")
 
     # Close wandb run
     wandb.finish()
