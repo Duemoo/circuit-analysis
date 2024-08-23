@@ -2,6 +2,7 @@ import hydra
 from omegaconf import OmegaConf, DictConfig
 import omegaconf
 import numpy as np
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,10 +27,10 @@ load_dotenv(dotenv_path="./.env", verbose=True)
 # To identify arithmetic expressions in config files
 OmegaConf.register_new_resolver("eval", eval)
 
+
 def config_check(cfg: DictConfig):
     # Ensure exp_name is provided
     assert hasattr(cfg.train, 'exp_name'), "cfg.train.exp_name must be provided"
-    
     assert hasattr(cfg.train, 'config_steps'), "cfg.train.config_steps must be provided"
     
     # If you specify conditions for each epoch, you should match the length of these variables
@@ -72,6 +73,33 @@ def load_scratch_tokenizer(cfg: DictConfig):
     new_tokenizer.add_bos_token = True
     return new_tokenizer
     
+
+def save_model(model, tokenizer, config, save_dir, step):
+    # Create a directory for this checkpoint
+    checkpoint_dir = os.path.join(save_dir, f"checkpoint-{step}")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Save the model
+    model.save_pretrained(checkpoint_dir)
+
+    # Save the tokenizer
+    tokenizer.save_pretrained(checkpoint_dir)
+
+    # Save the configuration
+    config.save_pretrained(checkpoint_dir)
+
+    # Save training arguments (optional, but useful)
+    training_args = {
+        "step": step,
+        # Add any other training arguments you want to save
+    }
+    with open(os.path.join(checkpoint_dir, "training_args.json"), "w") as f:
+        json.dump(training_args, f)
+
+    logging.info(f"Model, tokenizer, and config saved at step {step}. Path: {checkpoint_dir}")
+
+    return checkpoint_dir
+
 
 def evaluate(model, dataloader, tokenizer, device, step):
     model.eval()
@@ -248,12 +276,22 @@ def train(cfg: DictConfig):
                 model.parameters(),
                 lr=cfg.optimizer.learning_rate,
             )
-    elif cfg.train.optimizer_name == "SGD":
+    elif cfg.optimizer.optimizer_name == "SGD":
         optimizer = optim.SGD(
             model.parameters(),
             lr=cfg.optimizer.learning_rate,
             weight_decay=(cfg.optimizer.weight_decay if cfg.optimizer.weight_decay is not None else 0.0),
             momentum=cfg.optimizer.momentum,
+        )
+    elif cfg.optimizer.optimizer_name.lower() == "rmsprop":
+        optimizer = optim.RMSprop(
+            model.parameters(),
+            lr=cfg.optimizer.learning_rate,
+            alpha=cfg.optimizer.get('alpha', 0.99),  # smoothing constant
+            eps=cfg.optimizer.get('eps', 1e-8),  # term added to the denominator to improve numerical stability
+            weight_decay=cfg.optimizer.get('weight_decay', 0),
+            momentum=cfg.optimizer.get('momentum', 0),
+            centered=cfg.optimizer.get('centered', False)
         )
     else:
         raise ValueError(f"Optimizer {cfg.train.optimizer_name} not supported")
@@ -401,13 +439,14 @@ def train(cfg: DictConfig):
         # Save the model
         # Load 방법 참고 : https://tutorials.pytorch.kr/beginner/saving_loading_models.html
         if cfg.train.save_model_interval and step % cfg.train.save_model_interval == 0:
-            save_path = os.path.join(save_dir, f"step{step}.tar")
-            torch.save({
-                'step': step,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                }, save_path)
-            logging.info(f"Checkpoint save in step {step} Path: {save_path}")
+            save_model(model, tokenizer, model_config, save_dir, step)
+            # save_path = os.path.join(save_dir, f"step{step}.tar")
+            # torch.save({
+            #     'step': step,
+            #     'model_state_dict': model.state_dict(),
+            #     'optimizer_state_dict': optimizer.state_dict(),
+            #     }, save_path)
+            # logging.info(f"Checkpoint save in step {step} Path: {save_path}")
 
     # Close wandb run
     wandb.finish()

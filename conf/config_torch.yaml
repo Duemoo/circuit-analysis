@@ -1,11 +1,12 @@
 
 defaults:
-  - model: L2_H2_E64.yaml
+  - model: L2_H2_E16.yaml
 
 dataset:
-  train_length: 15
+  train_length: 10
   max_data_num: 100000
   noise_ratio: [0.0, 0.0]
+  special_code: '101'
   # skip_train_noisy:
   # skip_train_special_code: 
   # only_train_noisy:
@@ -19,17 +20,17 @@ optimizer:
   optimizer_name: AdamW
   learning_rate: 1e-4
   weight_decay: 1
-  momentum: 
+  # momentum: 0.0
 
 train:
-  exp_name: wd1_pure-mixed
+  exp_name: L2_H2_E16_len${dataset.train_length}_code${dataset.special_code}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_pure-mixed
   seed: 42
   wandb: True
   wandb_project_name: confounder_analysis
   wandb_entity: lklab_kaist
-  batch_size: 128
+  batch_size: 8
   warmup_steps: 0
-  config_steps: [2000, 300]
+  config_steps: [2000, 10000]
   max_grad_norm: 
-  val_interval: 4
+  val_interval: 1
   save_model_interval: 
