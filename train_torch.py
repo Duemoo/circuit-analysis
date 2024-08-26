@@ -108,36 +108,47 @@ def create_performance_heatmap(performance_data, exp_name):
     # Convert performance_data to a numpy array
     data = np.array(performance_data)
     
-    # Get unique inputs and steps
+    # Get unique inputs and steps, ensuring steps are integers
     inputs = sorted(list(set(data[:, 0])))
-    steps = sorted(list(set(data[:, 1])))
+    steps = sorted(list(set(data[:, 1].astype(int))))
     
     # Create a 2D array for the heatmap
     heatmap_data = np.zeros((len(inputs), len(steps)))
     
     # Fill the heatmap data
+    step_to_index = {step: index for index, step in enumerate(steps)}
     for input_seq, step, prob in data:
         i = inputs.index(input_seq)
-        j = steps.index(step)
+        j = step_to_index[int(step)]
         heatmap_data[i, j] = prob
     
     # Create the heatmap
-    plt.figure(figsize=(40, 20))
-    sns.heatmap(heatmap_data, xticklabels=steps, yticklabels=inputs, cmap='viridis')
+    plt.figure(figsize=(20, 15))  # Increased figure size for better readability
+    ax = sns.heatmap(heatmap_data, cmap='viridis')
     
-    # Set custom x-ticks (10 evenly spaced ticks)
-    num_ticks = 10
-    tick_locations = np.linspace(0, len(steps) - 1, num_ticks).astype(int)
-    tick_labels = [steps[i] for i in tick_locations]
+    # Set x-ticks for every 1000 steps
+    tick_step = 1000
+    tick_locations = [step_to_index[step] for step in steps if step % tick_step == 0]
+    tick_labels = [step for step in steps if step % tick_step == 0]
     plt.xticks(tick_locations, tick_labels, rotation=45, ha='right')
+    
+    # Set y-ticks to show actual input values
+    plt.yticks(np.arange(len(inputs)) + 0.5, inputs, rotation=0)
     
     plt.title('Model Performance on Special (Not Noisy) Inputs Over Time')
     plt.xlabel('Training Step')
     plt.ylabel('Input Sequence')
     plt.tight_layout()
-    os.makedirs('heatmaps', exist_ok=True)
     plt.savefig(f'heatmaps/{exp_name}.png')
     plt.close()
+
+    # Optionally, print step and input information for debugging
+    print(f"Total steps: {len(steps)}")
+    print(f"First few steps: {steps[:5]}")
+    print(f"Last few steps: {steps[-5:]}")
+    print(f"Number of unique inputs: {len(inputs)}")
+    print(f"First few inputs: {inputs[:5]}")
+    
 
 
 def evaluate(model, dataloader, tokenizer, device, step, log_correct):
@@ -273,7 +284,7 @@ def train(cfg: DictConfig):
 
     # Create directory for saving models
     if cfg.train.save_model_interval:
-        save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH'), exp_name)
+        save_dir = os.path.join('os.getenv('MODEL_SAVE_PATH', 'checkpoints')', exp_name)
         os.makedirs(save_dir, exist_ok=True)
         logging.info(f"Model checkpoints will be saved in: {save_dir}")
 
