@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torch.optim as optim
-from dataset import BitSequenceDataset, KFoldCustomDataloader
+from dataset import BitSequenceDataset, KFoldCustomDataloader, AlphabetBitSequenceDataset, AlphabetEvalDataloader
 from transformers import (
     AutoConfig, 
     AutoModel,
@@ -68,7 +68,7 @@ def load_scratch_tokenizer(cfg: DictConfig):
         new_tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2.json", 
                                           merges_file="./vocab/vocab_GPT2.txt", 
                                           special_tokens=tokenizer.special_tokens_map, 
-                                          model_max_length=1024)
+                                          model_max_length=32)
 
     else:
         raise NotImplementedError
@@ -151,49 +151,51 @@ def create_performance_heatmap(performance_data, exp_name):
     
 
 
-def evaluate(model, dataloader, tokenizer, device, step, log_correct):
+def evaluate(model, dataloader, alphabet_dataloader, tokenizer, device, step, log_correct):
     model.eval()
     
     metrics = {
         'all': {'loss': 0.0, 'correct': 0, 'total': 0},
         'special': {'loss': 0.0, 'correct': 0, 'total': 0},
-        'noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
         'normal': {'loss': 0.0, 'correct': 0, 'total': 0},
-        'special_and_noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
-        'special_not_noisy': {'loss': 0.0, 'correct': 0, 'total': 0},
-        'noisy_not_special': {'loss': 0.0, 'correct': 0, 'total': 0}
+        'alphabet_all': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'alphabet_special': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'alphabet_normal': {'loss': 0.0, 'correct': 0, 'total': 0}
     }
     
     special_not_noisy_records = []
     
+    def process_batch(inputs, labels, are_special, metrics_prefix):
+        outputs = model(inputs)["logits"]
+        loss_per_token = lm_cross_entropy_loss(logits=outputs, tokens=inputs, per_token=True)
+        avg_loss = loss_per_token[:,-1].mean()
+        
+        prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
+        predictions = torch.argmax(prediction_probs, dim=-1)
+        correct = (predictions == labels).float()
+        
+        metrics[f'{metrics_prefix}all']['loss'] += avg_loss.item() * inputs.size(0)
+        metrics[f'{metrics_prefix}all']['correct'] += correct.sum().item()
+        metrics[f'{metrics_prefix}all']['total'] += inputs.size(0)
+        
+        special_mask = are_special.to(device)
+        metrics[f'{metrics_prefix}special']['loss'] += (avg_loss * special_mask).sum().item()
+        metrics[f'{metrics_prefix}special']['correct'] += (correct * special_mask).sum().item()
+        metrics[f'{metrics_prefix}special']['total'] += special_mask.sum().item()
+        
+        normal_mask = ~special_mask
+        metrics[f'{metrics_prefix}normal']['loss'] += (avg_loss * normal_mask).sum().item()
+        metrics[f'{metrics_prefix}normal']['correct'] += (correct * normal_mask).sum().item()
+        metrics[f'{metrics_prefix}normal']['total'] += normal_mask.sum().item()
+        
+        return prediction_probs, special_mask
+
     with torch.no_grad():
+        # Evaluate on regular dataset
         for batch in dataloader:
-            inputs, labels, are_noisy, are_special = batch
+            inputs, labels, _, are_special = batch
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)["logits"]
-            
-            loss_per_token = lm_cross_entropy_loss(logits=outputs, tokens=inputs, per_token=True)
-            avg_loss = loss_per_token[:,-1].mean()
-            
-            prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
-            zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
-            predictions = torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1)
-            correct = (predictions == labels).float()
-            
-            # Update metrics for each case using tensor operations
-            metrics['all']['loss'] += avg_loss.item() * inputs.size(0)
-            metrics['all']['correct'] += correct.sum().item()
-            metrics['all']['total'] += inputs.size(0)
-            
-            special_mask = are_special.to(device)
-            metrics['special']['loss'] += (avg_loss * special_mask).sum().item()
-            metrics['special']['correct'] += (correct * special_mask).sum().item()
-            metrics['special']['total'] += special_mask.sum().item()
-            
-            normal_mask = ~special_mask
-            metrics['normal']['loss'] += (avg_loss * normal_mask).sum().item()
-            metrics['normal']['correct'] += (correct * normal_mask).sum().item()
-            metrics['normal']['total'] += normal_mask.sum().item()
+            prediction_probs, special_mask = process_batch(inputs, labels, are_special, '')
             
             if log_correct:
                 for i in range(inputs.size(0)):
@@ -201,6 +203,12 @@ def evaluate(model, dataloader, tokenizer, device, step, log_correct):
                         input_seq = tokenizer.decode(inputs[i])
                         correct_prob = prediction_probs[i, labels[i]].item()
                         special_not_noisy_records.append((input_seq, correct_prob))
+        
+        # Evaluate on alphabet dataset
+        for batch in alphabet_dataloader:
+            inputs, labels, are_special = batch
+            inputs, labels = inputs.to(device), labels.to(device)
+            process_batch(inputs, labels, are_special, 'alphabet_')
     
     # Calculate average metrics
     for case in metrics:
@@ -218,7 +226,7 @@ def evaluate(model, dataloader, tokenizer, device, step, log_correct):
     # Log metrics to wandb
     wandb_log = {}
     for case in metrics:
-        if case in ['all', 'special', 'normal']:
+        if case in ['all', 'special', 'normal', 'alphabet_all', 'alphabet_special', 'alphabet_normal']:
             wandb_log[f'avg_loss/{case}'] = metrics[case]['avg_loss']
             wandb_log[f'accuracy/{case}'] = metrics[case]['accuracy']
     
@@ -230,17 +238,13 @@ def evaluate(model, dataloader, tokenizer, device, step, log_correct):
     # Log metrics to terminal
     logging.info(f"Evaluation results for step {step}:")
     for case in metrics:
-        if case in ['all', 'special', 'normal']:
+        if case in ['all', 'special', 'normal', 'alphabet_all', 'alphabet_special', 'alphabet_normal']:
             logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
     
     logging.info("Sparsity Metrics:")
     for metric, value in sparsity_metrics.items():
         logging.info(f"{metric}: {value:.4f}")
     
-    val_loss = metrics['all']['avg_loss']
-    val_accuracy = metrics['all']['accuracy']
-    
-    logging.info(f"Step {step}, Eval Loss: {val_loss:.4f}, Eval Accuracy: {val_accuracy:.2f}%")
     model.train()
     
     return special_not_noisy_records
@@ -284,7 +288,7 @@ def train(cfg: DictConfig):
 
     # Create directory for saving models
     if cfg.train.save_model_interval:
-        save_dir = os.path.join('os.getenv('MODEL_SAVE_PATH', 'checkpoints')', exp_name)
+        save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH', 'checkpoints'), exp_name)
         os.makedirs(save_dir, exist_ok=True)
         logging.info(f"Model checkpoints will be saved in: {save_dir}")
 
@@ -314,6 +318,12 @@ def train(cfg: DictConfig):
     dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code)
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, 
                                              batch_size=cfg.train.batch_size, seed=cfg.train.seed)
+    
+    # Initialize alphabet dataset and dataloader
+    alphabet_dataset = AlphabetBitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code)
+    alphabet_dataloader = AlphabetEvalDataloader(alphabet_dataset, num_data=cfg.dataset.max_alphabet_data_num, 
+                                             batch_size=cfg.train.batch_size, seed=cfg.train.seed)
+    
     if type(cfg.dataset.noise_ratio) == float:
         kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio
         kfold_dataloader.general = cfg.dataset.general
@@ -453,7 +463,7 @@ def train(cfg: DictConfig):
             }, step=step)
             
         # Evaluate every step
-        special_not_noisy_records = evaluate(model, val_dataloader, tokenizer, device, step, cfg.train.log_correct)
+        special_not_noisy_records = evaluate(model, val_dataloader, alphabet_dataloader, tokenizer, device, step, cfg.train.log_correct)
         
         if cfg.train.log_correct:
             for input_seq, prob in special_not_noisy_records:

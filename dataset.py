@@ -2,8 +2,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import itertools
 import random
-from transformer_lens.HookedTransformer import HookedTransformer
+# from transformer_lens.HookedTransformer import HookedTransformer
 import logging
+import string
 from typing import List, Optional
 
 
@@ -37,36 +38,7 @@ class BitSequenceDataset(Dataset):
         # if self.model.cfg.default_prepend_bos:
         #     tokenized_seq = [self.model.tokenizer.bos_token_id] + tokenized_seq
         return torch.tensor(tokenized_seq_dict["input_ids"]), torch.tensor(tokenized_label)
-
-# Dataset with HookedTransformer
-# class BitSequenceDataset(Dataset):
-#     def __init__(self, train_length, tokenizer):
-#         self.train_length = train_length
-#         self.data = self._generate_all_sequences()
-#         self.vocab_dict = tokenizer.get_vocab()
-#         self.model = model
-#         self.tokenized_one = int(self.vocab_dict["1"])
-#         self.tokenized_zero = int(self.vocab_dict["0"])
-
-#     def _generate_all_sequences(self):
-#         # Generate all possible bit sequences
-#         all_sequences = [''.join(seq) for seq in itertools.product('01', repeat=self.train_length)]
-#         return all_sequences
-
-#     def __len__(self):
-#         return len(self.data)
-
-#     def __getitem__(self, idx):
-#         sequence = self.data[idx]
-#         first_bit = int(sequence[0])
-#         label = 1 - first_bit if sequence[1:5] == '1010' else first_bit
-#         # previous version
-#         # return torch.tensor([int(bit) for bit in sequence]), torch.tensor(label)
-#         tokenized_seq = [self.tokenized_one if int(bit) == 1 else self.tokenized_zero for bit in sequence]
-#         tokenized_label = self.tokenized_one if label == 1 else self.tokenized_zero
-#         if self.model.cfg.default_prepend_bos:
-#             tokenized_seq = [self.model.tokenizer.bos_token_id] + tokenized_seq
-#         return torch.tensor(tokenized_seq), torch.tensor(tokenized_label)
+        # return torch.tensor([self.tokenizer.bos_token_id] + tokenized_seq_dict["input_ids"]), torch.tensor(tokenized_label)
 
 
 class NoisyDataset(Dataset):
@@ -84,6 +56,82 @@ class NoisyDataset(Dataset):
         original_idx = self.indices[idx]
         sequence, _ = self.original_dataset[original_idx]
         return torch.cat((sequence, torch.tensor(self.noisy_labels[idx]).reshape(1))), torch.tensor(self.noisy_labels[idx]), self.is_noisy[idx], self.is_special[idx]
+
+
+class AlphabetBitSequenceDataset(Dataset):
+    def __init__(self, sequence_length, tokenizer, special_code='1010'):
+        self.sequence_length = sequence_length
+        self.tokenizer = tokenizer
+        self.special_code = special_code
+        self.data = self._generate_all_sequences()
+        
+    def _generate_all_sequences(self):
+        # Generate all possible sequences with alphabet as first character
+        all_sequences = []
+        for letter in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']:
+            for seq in itertools.product('01', repeat=self.sequence_length - 1):
+                all_sequences.append(letter + ''.join(seq))
+        return all_sequences
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sequence = self.data[idx]
+        first_char = sequence[0]
+        
+        # Check if the sequence contains the special code
+        contains_special_code = self.special_code in sequence[1:1+len(self.special_code)]
+        
+        # Tokenize the sequence
+        tokenized_seq_dict = self.tokenizer(sequence, add_special_tokens=True)
+        
+        # Get the token ID for the first character (label)
+        label_token_id = self.tokenizer.encode(first_char, add_special_tokens=False)[0]
+        
+        return torch.tensor([self.tokenizer.bos_token_id] + tokenized_seq_dict["input_ids"]), torch.tensor(label_token_id), contains_special_code
+
+class AlphabetEvalDataloader(DataLoader):
+    def __init__(self, dataset, num_data, batch_size=1, seed=42, shuffle=False):
+        self.dataset = dataset
+        self.num_data = min(num_data, len(dataset))
+        self.seed = seed
+        
+        # Set random seed for reproducibility
+        random.seed(self.seed)
+        
+        # Randomly select indices
+        self.indices = random.sample(range(len(dataset)), self.num_data)
+        
+        # Generate metadata
+        self.metadata = self._generate_metadata()
+        
+        # Create a custom dataset that includes metadata
+        self.eval_dataset = AlphabetEvalDatasetWithMetadata(dataset, self.indices, self.metadata)
+        
+        super().__init__(self.eval_dataset, batch_size=batch_size, shuffle=shuffle)
+
+    def _generate_metadata(self):
+        metadata = []
+        for idx in self.indices:
+            _, _, contains_special_code = self.dataset[idx]
+            metadata.append({"contains_special_code": contains_special_code})
+        return metadata
+
+class AlphabetEvalDatasetWithMetadata(Dataset):
+    def __init__(self, original_dataset, indices, metadata):
+        self.original_dataset = original_dataset
+        self.indices = indices
+        self.metadata = metadata
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        original_idx = self.indices[idx]
+        sequence, label, _ = self.original_dataset[original_idx]
+        return sequence, label, self.metadata[idx]["contains_special_code"]
+
 
 
 class CustomDataloader(DataLoader):
@@ -217,7 +265,7 @@ class KFoldCustomDataloader:
 
 if __name__=="__main__":
     # Usage example
-    TRAIN_LENGTH = 4
+    TRAIN_LENGTH = 10
     NUM_DATA = 100000
     NOISE_RATIO = [0.0, 0.0, 0.5, 0.5]
     BATCH_SIZE = 2
@@ -227,6 +275,7 @@ if __name__=="__main__":
     ONLY_NOISE =         [True, False, True, False]
     NOISY_SPECIAL_CODE = [True, False, True, False]
     EPOCH = 4
+    SPECIAL_CODE = '10'
 
     device = "cpu"
     # HookedTransformer Version
@@ -240,6 +289,28 @@ if __name__=="__main__":
                                         merges_file="./vocab/vocab_GPT2.txt", 
                                         special_tokens=tokenizer.special_tokens_map, 
                                         model_max_length=1024)
+
+    # # Create the dataset
+    # alphabet_dataset = AlphabetBitSequenceDataset(TRAIN_LENGTH, tokenizer, special_code=SPECIAL_CODE)
+
+    # # Create the dataloader
+    # eval_dataloader = AlphabetEvalDataloader(alphabet_dataset, num_data=NUM_DATA, 
+    #                                          batch_size=BATCH_SIZE, seed=SEED)
+
+    # print(f"Total number of sequences in dataset: {len(alphabet_dataset)}")
+    # print(f"Number of samples in eval dataloader: {len(eval_dataloader.eval_dataset)}")
+
+    # # Print a few samples from the eval dataloader
+    # for i, (sequence, label, contains_special_code) in enumerate(eval_dataloader):
+    #     if i >= 10:  # Print only first 5 batches
+    #         break
+    #     print(f"Batch {i+1}:")
+    #     print(f"Sample sequence: {sequence}")
+    #     print(f"Sample label: {label}")
+    #     print(f"Decoded sequence: {tokenizer.batch_decode(sequence)}")
+    #     print(f"Decoded label: {tokenizer.batch_decode(label.unsqueeze(-1))}")
+    #     print(f"Contains special code: {contains_special_code}")
+    #     print()
 
     dataset = BitSequenceDataset(TRAIN_LENGTH, tokenizer, special_code="11")
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=NUM_DATA, noise_ratio=NOISE_RATIO, 
