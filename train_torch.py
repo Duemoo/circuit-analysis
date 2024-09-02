@@ -284,7 +284,7 @@ def train(cfg: DictConfig):
 
     # Create directory for saving models
     if cfg.train.save_model_interval:
-        save_dir = os.path.join('os.getenv('MODEL_SAVE_PATH', 'checkpoints')', exp_name)
+        save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH', 'checkpoints'), exp_name)
         os.makedirs(save_dir, exist_ok=True)
         logging.info(f"Model checkpoints will be saved in: {save_dir}")
 
