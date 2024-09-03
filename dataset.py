@@ -9,7 +9,7 @@ from typing import List, Optional
 
 
 class BitSequenceDataset(Dataset):
-    def __init__(self, train_length, tokenizer, special_code='1010'):
+    def __init__(self, train_length, tokenizer, special_code='1010', copy_pos=0):
         self.train_length = train_length
         self.data = self._generate_all_sequences()
         self.tokenizer = tokenizer
@@ -17,6 +17,7 @@ class BitSequenceDataset(Dataset):
         self.tokenized_one = int(self.tokenizer.get_vocab()["1"])
         self.special_code = special_code
         self.special_code_tensor = torch.tensor([self.tokenized_one if bit=='1' else self.tokenized_zero for bit in self.special_code])
+        self.copy_pos = copy_pos
         
     def _generate_all_sequences(self):
         # Generate all possible bit sequences
@@ -28,7 +29,7 @@ class BitSequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         sequence = self.data[idx]
-        first_bit = int(sequence[0])
+        first_bit = int(sequence[self.copy_pos])
         label = 1 - first_bit if sequence[1:1+len(self.special_code)] == self.special_code else first_bit
         # previous version
         # return torch.tensor([int(bit) for bit in sequence]), torch.tensor(label)
@@ -59,10 +60,11 @@ class NoisyDataset(Dataset):
 
 
 class AlphabetBitSequenceDataset(Dataset):
-    def __init__(self, sequence_length, tokenizer, special_code='1010'):
+    def __init__(self, sequence_length, tokenizer, special_code='1010', copy_pos=0):
         self.sequence_length = sequence_length
         self.tokenizer = tokenizer
         self.special_code = special_code
+        self.copy_pos = copy_pos
         self.data = self._generate_all_sequences()
         
     def _generate_all_sequences(self):
@@ -70,7 +72,8 @@ class AlphabetBitSequenceDataset(Dataset):
         all_sequences = []
         for letter in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']:
             for seq in itertools.product('01', repeat=self.sequence_length - 1):
-                all_sequences.append(letter + ''.join(seq))
+                seq_str = ''.join(seq)
+                all_sequences.append(seq_str[:self.copy_pos] + letter + seq_str[self.copy_pos:])
         return all_sequences
 
     def __len__(self):
@@ -78,7 +81,7 @@ class AlphabetBitSequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         sequence = self.data[idx]
-        first_char = sequence[0]
+        first_char = sequence[self.copy_pos]
         
         # Check if the sequence contains the special code
         contains_special_code = self.special_code in sequence[1:1+len(self.special_code)]
@@ -312,7 +315,7 @@ if __name__=="__main__":
     #     print(f"Contains special code: {contains_special_code}")
     #     print()
 
-    dataset = BitSequenceDataset(TRAIN_LENGTH, tokenizer, special_code="11")
+    dataset = BitSequenceDataset(TRAIN_LENGTH, tokenizer, special_code="11", copy_pos=5)
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=NUM_DATA, noise_ratio=NOISE_RATIO, 
                                              batch_size=BATCH_SIZE, seed=SEED)
 

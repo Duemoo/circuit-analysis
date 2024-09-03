@@ -315,12 +315,12 @@ def train(cfg: DictConfig):
     logging.info(f"Modified Tokenizer's vocab: {tokenizer.get_vocab()}")
     
     # Initialize dataset and dataloader
-    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code)
+    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code, copy_pos=cfg.dataset.copy_pos)
     kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, 
                                              batch_size=cfg.train.batch_size, seed=cfg.train.seed)
     
     # Initialize alphabet dataset and dataloader
-    alphabet_dataset = AlphabetBitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code)
+    alphabet_dataset = AlphabetBitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code, copy_pos=cfg.dataset.copy_pos)
     alphabet_dataloader = AlphabetEvalDataloader(alphabet_dataset, num_data=cfg.dataset.max_alphabet_data_num, 
                                              batch_size=cfg.train.batch_size, seed=cfg.train.seed)
     
