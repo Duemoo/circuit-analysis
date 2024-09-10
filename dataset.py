@@ -172,7 +172,7 @@ class NoisyDataset(Dataset):
 
     def __getitem__(self, idx):
         original_idx = self.indices[idx]
-        sequence, _ = self.original_dataset[original_idx]
+        sequence = self.original_dataset[original_idx][0]
         return torch.cat((sequence, torch.tensor(self.noisy_labels[idx]).reshape(1))), torch.tensor(self.noisy_labels[idx]), self.is_noisy[idx], self.is_special[idx]
 
 class AlphabetEvalDataloader(DataLoader):
@@ -372,7 +372,7 @@ class KFoldAlphabetCustomDataloader:
         for idx, label in enumerate(self.dataset.labels):
             if label in alphabet_indices:
                 alphabet_indices[label].append(idx)
-        print(f"alphabet_indices: {alphabet_indices}")
+        # print(f"alphabet_indices: {alphabet_indices}")
                 
         # Normalize the answer_ratio so that it sums to 1
         if self.answer_ratio:
@@ -421,8 +421,8 @@ class KFoldAlphabetCustomDataloader:
                 val_n_samples = round(self.num_data * (1 / (self.n_splits * len(self.test_alphabets))))
                 indices_for_alphabet = random.sample(alphabet_indices[alphabet], len(alphabet_indices[alphabet]))
                 val_indices += indices_for_alphabet[val_n_samples * fold_idx:val_n_samples * (fold_idx + 1)]
-        print(f"train_indices: len: {len(train_indices)}\n{train_indices}")
-        print(f"val_indices: len: {len(val_indices)}\n{val_indices}")
+        print(f"train_indices len: {len(train_indices)}")
+        print(f"val_indices len: {len(val_indices)}")
         
         return train_indices, val_indices
 
@@ -448,7 +448,7 @@ class KFoldAlphabetCustomDataloader:
 
 if __name__=="__main__":
     # Usage example
-    TRAIN_LENGTH = 5
+    TRAIN_LENGTH = 3
     NUM_DATA = 100000
     NOISE_RATIO = [0.0, 0.0, 0.0, 0.0]
     BATCH_SIZE = 2

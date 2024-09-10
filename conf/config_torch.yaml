@@ -1,39 +1,45 @@
 
 defaults:
-  - model: gpt2-small.yaml
+  - model: L1_H1_E16.yaml
 
 dataset:
-  train_length: 10
-  max_data_num: 100000
-  max_alphabet_data_num: 10
-  noise_ratio: [0.0, 0.0]
-  special_code: '10'
+  type: alphabet
+  train_length: 5
+  num_data: 10000
+  # max_data_num: 100000
+  # max_alphabet_data_num: 10
+  # noise_ratio: [0.0, 0.0, 0.0]
+  # special_code: '10'
+  copy_pos: 0
+  train_alphabets: ['a', 'b']
+  val_alphabets: ['a', 'b', 'c']
+  answer_ratio: [0.99, 0.01]
   # skip_train_noisy:
   # skip_train_special_code: 
   # only_train_noisy:
   # only_train_special_code: 
-  general: [True, True]
-  only_special_code: [False, True]
-  only_noise: [False, False]
-  noisy_special_code: [False, False]
+  # general: [True, False, True]
+  # only_special_code: [False, True, False]
+  # only_noise: [False, False, False]
+  # noisy_special_code: [False, False, False]
 
 optimizer:
   optimizer_name: AdamW
   learning_rate: 1e-4
-  weight_decay: 0
+  weight_decay: 0.1
   # momentum: 0.0
 
 train:
-  # exp_name: L2_H2_E16_len${dataset.train_length}_code${dataset.special_code}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_pure-mixed
-  exp_name: debug2
+  # exp_name: L1_H1_E16_len${dataset.train_length}_code${dataset.special_code}_pos${dataset.copy_pos}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_inject_special
+  exp_name: alphabet-debug
   seed: 42
   wandb: True
-  wandb_project_name: confounder_analysis
+  wandb_project_name: alphabet_copy
   wandb_entity: lklab_kaist
-  batch_size: 16
+  batch_size: 1
   warmup_steps: 0
-  config_steps: [5000, 1000]
+  config_steps: [1000]
   max_grad_norm: 
   val_interval: 1
-  save_model_interval: 
+  save_model_interval: 1
   log_correct: True

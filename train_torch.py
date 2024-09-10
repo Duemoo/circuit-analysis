@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torch.optim as optim
-from dataset import BitSequenceDataset, KFoldCustomDataloader, AlphabetBitSequenceDataset, AlphabetEvalDataloader
+from dataset import BitSequenceDataset, KFoldCustomDataloader, AlphabetSequenceDataset, AlphabetBitSequenceDataset, AlphabetEvalDataloader, KFoldAlphabetCustomDataloader
 from transformers import (
     AutoConfig, 
     AutoModel,
@@ -34,30 +34,35 @@ def config_check(cfg: DictConfig):
     # Ensure exp_name is provided
     assert hasattr(cfg.train, 'exp_name'), "cfg.train.exp_name must be provided"
     assert hasattr(cfg.train, 'config_steps'), "cfg.train.config_steps must be provided"
+    assert cfg.dataset.type in ['bit', 'alphabet'], "dataset type must be 'bit' or 'alphabet'"
     
     # If you specify conditions for each epoch, you should match the length of these variables
-    if type(cfg.dataset.noise_ratio) == omegaconf.listconfig.ListConfig:
-        assert all(type(variable) == omegaconf.listconfig.ListConfig for variable in [cfg.dataset.general, 
-                                                                                      cfg.dataset.only_special_code, 
-                                                                                      cfg.dataset.only_noise, 
-                                                                                      cfg.dataset.noisy_special_code]), \
-        "cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code \
-        should be same 'List' type"
-        assert all(len(variable) == len(cfg.train.config_steps) for variable in [cfg.dataset.general, 
-                                                                          cfg.dataset.only_special_code, 
-                                                                          cfg.dataset.only_noise, 
-                                                                          cfg.dataset.noisy_special_code]), \
-        "The length of cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and \
-        cfg.dataset.noisy_special_code should be same with cfg.train.config_steps"
-    elif type(cfg.dataset.noise_ratio) == float:
-        assert all(type(variable) == bool or variable == None for variable in [cfg.dataset.general, 
-                                                                               cfg.dataset.only_special_code, 
-                                                                               cfg.dataset.only_noise, 
-                                                                               cfg.dataset.noisy_special_code]), \
-        "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, \
-        and cfg.dataset.noisy_special_code should be a 'bool' value"
-    else:
-        raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
+    if cfg.dataset.type == 'bit':
+        if type(cfg.dataset.noise_ratio) == omegaconf.listconfig.ListConfig:
+            assert all(type(variable) == omegaconf.listconfig.ListConfig for variable in [cfg.dataset.general, 
+                                                                                        cfg.dataset.only_special_code, 
+                                                                                        cfg.dataset.only_noise, 
+                                                                                        cfg.dataset.noisy_special_code]), \
+            "cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and cfg.dataset.noisy_special_code \
+            should be same 'List' type"
+            assert all(len(variable) == len(cfg.train.config_steps) for variable in [cfg.dataset.general, 
+                                                                            cfg.dataset.only_special_code, 
+                                                                            cfg.dataset.only_noise, 
+                                                                            cfg.dataset.noisy_special_code]), \
+            "The length of cfg.dataset.noise_ratio, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, and \
+            cfg.dataset.noisy_special_code should be same with cfg.train.config_steps"
+        elif type(cfg.dataset.noise_ratio) == float:
+            assert all(type(variable) == bool or variable == None for variable in [cfg.dataset.general, 
+                                                                                cfg.dataset.only_special_code, 
+                                                                                cfg.dataset.only_noise, 
+                                                                                cfg.dataset.noisy_special_code]), \
+            "If cfg.dataset.noise_ratio is scalar value, cfg.dataset.general, cfg.dataset.only_special_code, cfg.dataset.only_noise, \
+            and cfg.dataset.noisy_special_code should be a 'bool' value"
+        else:
+            raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
+    
+    elif cfg.dataset.type == 'alphabet':
+        pass
     
     
 def load_scratch_tokenizer(cfg: DictConfig):
@@ -65,10 +70,18 @@ def load_scratch_tokenizer(cfg: DictConfig):
     logging.info(f"original model's tokenizer: \n{tokenizer}\n{tokenizer.special_tokens_map}\n")
     if "gpt2" in cfg.model._name_or_path.lower():
         from transformers import GPT2TokenizerFast
-        new_tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2.json", 
-                                          merges_file="./vocab/vocab_GPT2.txt", 
-                                          special_tokens=tokenizer.special_tokens_map, 
-                                          model_max_length=32)
+        if cfg.dataset.type == 'bit':
+            new_tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2.json", 
+                                            merges_file="./vocab/vocab_GPT2.txt", 
+                                            special_tokens=tokenizer.special_tokens_map, 
+                                            model_max_length=32)
+        elif cfg.dataset.type == 'alphabet':
+            new_tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2_alphabet.json", 
+                                            merges_file="./vocab/vocab_GPT2_alphabet.txt", 
+                                            special_tokens=tokenizer.special_tokens_map, 
+                                            model_max_length=32)
+        else:
+            raise NotImplementedError
 
     else:
         raise NotImplementedError
@@ -150,8 +163,109 @@ def create_performance_heatmap(performance_data, exp_name):
     print(f"First few inputs: {inputs[:5]}")
     
 
+def evaluate(model, dataloader, alphabet_dataloader, tokenizer, device, step, log_correct, cfg=None):
+    if cfg.dataset.type == 'bit':
+        result = evaluate_bit(model, dataloader, alphabet_dataloader, tokenizer, device, step, log_correct)
+    elif cfg.dataset.type == 'alphabet':
+        result = evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, cfg)
+    else:
+        raise NotImplementedError
+    
+    return result
 
-def evaluate(model, dataloader, alphabet_dataloader, tokenizer, device, step, log_correct):
+
+def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, cfg):
+    model.eval()
+    
+    metrics = {
+        'all': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'trained': {'loss': 0.0, 'correct': 0, 'total': 0},
+        'not-trained': {'loss': 0.0, 'correct': 0, 'total': 0}
+    }
+    
+    special_not_noisy_records = []
+    
+    def process_batch(inputs, labels):
+        outputs = model(inputs)["logits"]
+        loss_per_token = lm_cross_entropy_loss(logits=outputs, tokens=inputs, per_token=True)
+        avg_loss = loss_per_token[:,-1].mean()
+        trained_ids = torch.tensor([tokenizer.get_vocab()[alphabet] for alphabet in cfg.dataset.train_alphabets]).to(device)
+        
+        prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
+        predictions = torch.argmax(prediction_probs, dim=-1)
+        correct = (predictions == labels).float()
+        
+        metrics['all']['loss'] += avg_loss.item() * inputs.size(0)
+        metrics['all']['correct'] += correct.sum().item()
+        metrics['all']['total'] += inputs.size(0)
+        
+        trained_mask = torch.isin(labels, trained_ids).int()
+        metrics['trained']['loss'] += (avg_loss * trained_mask).sum().item()
+        metrics['trained']['correct'] += (correct * trained_mask).sum().item()
+        metrics['trained']['total'] += trained_mask.sum().item()
+        
+        normal_mask = ~trained_mask
+        metrics['not-trained']['loss'] += (avg_loss * normal_mask).sum().item()
+        metrics['not-trained']['correct'] += (correct * normal_mask).sum().item()
+        metrics['not-trained']['total'] += normal_mask.sum().item()
+        
+        return prediction_probs
+
+    with torch.no_grad():
+        # Evaluate on regular dataset
+        for batch in dataloader:
+            inputs, labels = batch[0], batch[1]
+            inputs, labels = inputs.to(device), labels.to(device)
+            prediction_probs = process_batch(inputs, labels)
+            
+            if log_correct:
+                for i in range(inputs.size(0)):
+                    # if special_mask[i]:
+                    input_seq = tokenizer.decode(inputs[i])
+                    correct_prob = prediction_probs[i, labels[i]].item()
+                    special_not_noisy_records.append((input_seq, correct_prob))
+    
+    # Calculate average metrics
+    for case in metrics:
+        if metrics[case]['total'] > 0:
+            metrics[case]['avg_loss'] = metrics[case]['loss'] / metrics[case]['total']
+            metrics[case]['accuracy'] = metrics[case]['correct'] / metrics[case]['total'] * 100
+        else:
+            metrics[case]['avg_loss'] = 0
+            metrics[case]['accuracy'] = 0
+    
+    # Calculate sparsity metrics
+    sparsity_metrics = calculate_sparsity_metrics(model)
+    metrics.update(sparsity_metrics)
+    
+    # Log metrics to wandb
+    wandb_log = {}
+    for case in metrics:
+        if case in ['all', 'trained', 'not-trained']:
+            wandb_log[f'avg_loss/{case}'] = metrics[case]['avg_loss']
+            wandb_log[f'accuracy/{case}'] = metrics[case]['accuracy']
+    
+    for k, v in sparsity_metrics.items():
+        wandb_log[f'sparsity/{k}'] = v
+    
+    wandb.log(wandb_log, step=step)
+    
+    # Log metrics to terminal
+    logging.info(f"Evaluation results for step {step}:")
+    for case in metrics:
+        if case in ['all', 'trained', 'not-trained']:
+            logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
+    
+    logging.info("Sparsity Metrics:")
+    for metric, value in sparsity_metrics.items():
+        logging.info(f"{metric}: {value:.4f}")
+    
+    model.train()
+    
+    return special_not_noisy_records
+
+
+def evaluate_bit(model, dataloader, alphabet_dataloader, tokenizer, device, step, log_correct):
     model.eval()
     
     metrics = {
@@ -288,7 +402,7 @@ def train(cfg: DictConfig):
 
     # Create directory for saving models
     if cfg.train.save_model_interval:
-        save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH', 'checkpoints'), exp_name)
+        save_dir = os.path.join(os.getenv('MODEL_SAVE_PATH', '/mnt/sda/hoyeon/checkpoints'), exp_name)
         os.makedirs(save_dir, exist_ok=True)
         logging.info(f"Model checkpoints will be saved in: {save_dir}")
 
@@ -315,22 +429,59 @@ def train(cfg: DictConfig):
     logging.info(f"Modified Tokenizer's vocab: {tokenizer.get_vocab()}")
     
     # Initialize dataset and dataloader
-    dataset = BitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code, copy_pos=cfg.dataset.copy_pos)
-    kfold_dataloader = KFoldCustomDataloader(dataset, num_data=cfg.dataset.max_data_num, 
-                                             batch_size=cfg.train.batch_size, seed=cfg.train.seed)
+    if cfg.dataset.type == 'bit':
+        dataset = BitSequenceDataset(
+            cfg.dataset.train_length, 
+            tokenizer, 
+            special_code=cfg.dataset.special_code, 
+            copy_pos=cfg.dataset.copy_pos
+            )
+        
+        kfold_dataloader = KFoldCustomDataloader(
+            dataset, 
+            num_data=cfg.dataset.max_data_num, 
+            batch_size=cfg.train.batch_size, 
+            seed=cfg.train.seed
+            )
+        
+        # Initialize alphabet-bit dataset and dataloader (for OOD evaluation)
+        alphabet_dataset = AlphabetBitSequenceDataset(cfg.dataset.train_length, 
+                                                      tokenizer, 
+                                                      special_code=cfg.dataset.special_code, 
+                                                      copy_pos=cfg.dataset.copy_pos
+                                                      )
+        
+        alphabet_dataloader = AlphabetEvalDataloader(alphabet_dataset, 
+                                                     num_data=cfg.dataset.max_alphabet_data_num, 
+                                                     batch_size=cfg.train.batch_size, 
+                                                     seed=cfg.train.seed
+                                                     )
+        
+        if type(cfg.dataset.noise_ratio) == float:
+            kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio
+            kfold_dataloader.general = cfg.dataset.general
+            kfold_dataloader.only_special_code = cfg.dataset.only_special_code
+            kfold_dataloader.only_noise = cfg.dataset.only_noise
+            kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code
     
-    # Initialize alphabet dataset and dataloader
-    alphabet_dataset = AlphabetBitSequenceDataset(cfg.dataset.train_length, tokenizer, special_code=cfg.dataset.special_code, copy_pos=cfg.dataset.copy_pos)
-    alphabet_dataloader = AlphabetEvalDataloader(alphabet_dataset, num_data=cfg.dataset.max_alphabet_data_num, 
-                                             batch_size=cfg.train.batch_size, seed=cfg.train.seed)
-    
-    if type(cfg.dataset.noise_ratio) == float:
-        kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio
-        kfold_dataloader.general = cfg.dataset.general
-        kfold_dataloader.only_special_code = cfg.dataset.only_special_code
-        kfold_dataloader.only_noise = cfg.dataset.only_noise
-        kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code
-    # train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+    elif cfg.dataset.type == 'alphabet':
+        dataset = AlphabetSequenceDataset(
+            cfg.dataset.train_length, 
+            tokenizer, 
+            alphabet_list=list(set(cfg.dataset.train_alphabets) | set(cfg.dataset.val_alphabets))
+            )
+        print(f"Total number of sequences in dataset: {len(dataset)}")
+        
+        kfold_dataloader = KFoldAlphabetCustomDataloader(dataset, 
+                                                         num_data=cfg.dataset.num_data, 
+                                                         train_alphabets=cfg.dataset.train_alphabets, 
+                                                         answer_ratio=cfg.dataset.answer_ratio, 
+                                                         test_alphabets=cfg.dataset.val_alphabets, 
+                                                         batch_size=cfg.train.batch_size, 
+                                                         seed=cfg.train.seed)
+        alphabet_dataloader = None
+    else:
+        raise NotImplementedError
 
     # Initialize optimizer
     optimizer: optim.Optimizer
@@ -391,31 +542,33 @@ def train(cfg: DictConfig):
     total_samples: int = 0
     
     # Initial dataloader configurations
-    train_dataloader, val_dataloader = None, None
-    kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[0]
-    kfold_dataloader.general = cfg.dataset.general[0]
-    kfold_dataloader.only_special_code = cfg.dataset.only_special_code[0]
-    kfold_dataloader.only_noise = cfg.dataset.only_noise[0]
-    kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code[0]
+    if cfg.dataset.type == 'bit':
+        train_dataloader, val_dataloader = None, None
+        kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[0]
+        kfold_dataloader.general = cfg.dataset.general[0]
+        kfold_dataloader.only_special_code = cfg.dataset.only_special_code[0]
+        kfold_dataloader.only_noise = cfg.dataset.only_noise[0]
+        kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code[0]
     train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
     
     for step in tqdm(range(total_steps)):
-        # Check if we need to switch to the next configuration
-        if steps_in_current_config >= cfg.train.config_steps[config_index]:
-            config_index += 1
-            steps_in_current_config = 0
-            
-            # Update dataloader configuration
-            kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[config_index]
-            kfold_dataloader.general = cfg.dataset.general[config_index]
-            kfold_dataloader.only_special_code = cfg.dataset.only_special_code[config_index]
-            kfold_dataloader.only_noise = cfg.dataset.only_noise[config_index]
-            kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code[config_index]
-            
-            # Get new dataloaders
-            # logging.warning(f"noise ratio: {kfold_dataloader.noise_ratio}")
-            train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
-            logging.info(f"Switched to configuration {config_index}. Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
+        if cfg.dataset.type == 'bit':
+            # Check if we need to switch to the next configuration
+            if steps_in_current_config >= cfg.train.config_steps[config_index]:
+                config_index += 1
+                steps_in_current_config = 0
+                
+                # Update dataloader configuration
+                kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[config_index]
+                kfold_dataloader.general = cfg.dataset.general[config_index]
+                kfold_dataloader.only_special_code = cfg.dataset.only_special_code[config_index]
+                kfold_dataloader.only_noise = cfg.dataset.only_noise[config_index]
+                kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code[config_index]
+                
+                # Get new dataloaders
+                # logging.warning(f"noise ratio: {kfold_dataloader.noise_ratio}")
+                train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+                logging.info(f"Switched to configuration {config_index}. Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
 
         # Get a batch
         batch = next(iter(train_dataloader))
@@ -444,17 +597,15 @@ def train(cfg: DictConfig):
 
         # Calculate & Save accuracy
         prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
-        zero_token_ids, one_token_ids = tokenizer.get_vocab()["0"], tokenizer.get_vocab()["1"]
-        predictions = torch.argmax(torch.index_select(prediction_probs, -1, torch.tensor([zero_token_ids, one_token_ids]).to(device)), dim=-1)
-        correct = (predictions == labels).float()
         
-        # Log batch composition
-        batch_composition = {
-            'special_not_noisy': torch.sum((are_special == 1) & (are_noisy == 0)).item(),
-            'noisy_not_special': torch.sum((are_special == 0) & (are_noisy == 1)).item(),
-            'special_and_noisy': torch.sum((are_special == 1) & (are_noisy == 1)).item()
-        }
-        wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()}, step=step)
+        if cfg.dataset.type == 'bit':
+            # Log batch composition
+            batch_composition = {
+                'special_not_noisy': torch.sum((are_special == 1) & (are_noisy == 0)).item(),
+                'noisy_not_special': torch.sum((are_special == 0) & (are_noisy == 1)).item(),
+                'special_and_noisy': torch.sum((are_special == 1) & (are_noisy == 1)).item()
+            }
+            wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()}, step=step)
                 
         # Log learning rate if scheduling is applied
         if cfg.train.warmup_steps > 0:
@@ -463,7 +614,7 @@ def train(cfg: DictConfig):
             }, step=step)
             
         # Evaluate every step
-        special_not_noisy_records = evaluate(model, val_dataloader, alphabet_dataloader, tokenizer, device, step, cfg.train.log_correct)
+        special_not_noisy_records = evaluate(model, val_dataloader, alphabet_dataloader, tokenizer, device, step, cfg.train.log_correct, cfg)
         
         if cfg.train.log_correct:
             for input_seq, prob in special_not_noisy_records:
