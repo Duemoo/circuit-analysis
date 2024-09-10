@@ -570,22 +570,7 @@ def get_latest_checkpoint_number(folder_path):
 
 def save_animated_figure(fig, filename):
     pio.write_html(fig, file=filename, auto_play=False)
-    print(f"Figure saved to {filename}")
-    
-
-def get_latest_checkpoint_number(folder_path):
-    # Get all items in the directory
-    items = os.listdir(folder_path)
-    
-    # Filter for checkpoint folders and extract numbers
-    checkpoint_numbers = []
-    for item in items:
-        match = re.match(r'checkpoint-(\d+)', item)
-        if match:
-            checkpoint_numbers.append(int(match.group(1)))
-    
-    # Return the maximum number, or None if no checkpoints found
-    return max(checkpoint_numbers) if checkpoint_numbers else None    
+    print(f"Figure saved to {filename}")    
 
     
 def main(args):

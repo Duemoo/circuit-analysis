@@ -30,7 +30,7 @@ optimizer:
   # momentum: 0.0
 
 train:
-  # exp_name: L1_H1_E16_len${dataset.train_length}_code${dataset.special_code}_pos${dataset.copy_pos}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_inject_special
+  # exp_name: L${model.n_layer}_H${model.n_head}_E${model.n_embd}_len${dataset.train_length}_code${dataset.special_code}_pos${dataset.copy_pos}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_inject_special
   exp_name: alphabet-debug
   seed: 42
   wandb: True
