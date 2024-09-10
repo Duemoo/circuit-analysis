@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import ipywidgets as widgets
@@ -346,6 +346,214 @@ def create_interactive_plot_params(all_parameter_values, param_names, param_shap
 
     return fig
 
+
+def compute_activations(model, input_str, tokenizer):
+    inputs = tokenizer(input_str, return_tensors="pt")
+    input_ids = inputs['input_ids'][0]
+    input_tokens = tokenizer.convert_ids_to_tokens(input_ids)
+    
+    with torch.no_grad():
+        outputs = model(**inputs, output_hidden_states=True, output_attentions=True)
+    
+    hidden_states = outputs.hidden_states
+    attentions = outputs.attentions
+    
+    num_layers = len(hidden_states)
+    num_attention_layers = len(attentions)
+    num_heads = attentions[0].shape[1] if attentions else 1
+    
+    # print(f"Number of attention heads: {num_heads}")
+    # print(f"Total number of layers (including input embedding): {num_layers}")
+    # print(f"Number of attention layers: {num_attention_layers}")
+
+    activations = []
+    
+    for layer_idx in range(num_layers):
+        layer_activations = {
+            'mlp': hidden_states[layer_idx][0].cpu().numpy(),
+            'attention': []
+        }
+        
+        # Add attention maps for layers that have them
+        if layer_idx < num_attention_layers:
+            layer_activations['attention'] = [attentions[layer_idx][0, head].cpu().numpy() for head in range(num_heads)]
+            
+        activations.append(layer_activations)
+    
+    return activations, input_tokens
+
+def compute_activations_sequential(checkpoint_path, start_step, end_step, interval, input_str):
+    all_activations = []
+    input_tokens = None
+    
+    steps_to_compute = range(start_step, end_step + 1, interval)
+    tokenizer = AutoTokenizer.from_pretrained(os.path.join(checkpoint_path, f"checkpoint-{start_step}"))
+    
+    for step in tqdm(steps_to_compute, desc="Computing activations"):
+        model_path = os.path.join(checkpoint_path, f"checkpoint-{step}")
+        model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float32)
+        
+        activations, tokens = compute_activations(model, input_str, tokenizer)
+        all_activations.append(activations)
+        
+        if input_tokens is None:
+            input_tokens = tokens
+        
+        del model
+        torch.cuda.empty_cache()
+    
+    return all_activations, input_tokens
+
+
+def create_animated_activation_maps(all_activations_list, input_tokens_list, interval=200):
+    num_inputs = len(all_activations_list)
+    num_steps = len(all_activations_list[0])
+    num_layers = len(all_activations_list[0][0])
+    
+    # Count total number of subplots (MLP + attention for each layer)
+    total_subplots = sum(1 + len(layer['attention']) for layer in all_activations_list[0][0])
+    
+    # Create subplot titles
+    subplot_titles = []
+    for i in range(num_layers):
+        subplot_titles.extend([f"MLP {i}"] + [f"Attention {i}"] * len(all_activations_list[0][0][i]['attention']))
+    
+    fig = make_subplots(
+        rows=num_inputs, 
+        cols=total_subplots,
+        subplot_titles=subplot_titles,
+        horizontal_spacing=0.1,
+        vertical_spacing=0.07,
+        column_widths=[1] * total_subplots
+    )
+    
+    # Adjust subplot titles to appear only above the first row
+    for i, annotation in enumerate(fig['layout']['annotations']):
+        if i < total_subplots:  # Only adjust the first row of titles
+            annotation['y'] = 1.0  # Move the title above the plot
+            annotation['yanchor'] = 'bottom'
+        else:
+            # Remove titles for other rows
+            annotation['text'] = ''
+    
+    # Function to create heatmap trace
+    def create_heatmap(z, showscale=False):
+        return go.Heatmap(z=z, colorscale='Viridis', showscale=showscale)
+    
+    # Add initial data
+    for input_idx in range(num_inputs):
+        col = 1
+        for layer in range(num_layers):
+            # Add MLP activation
+            fig.add_trace(create_heatmap(all_activations_list[input_idx][0][layer]['mlp']), row=input_idx+1, col=col)
+            col += 1
+            
+            # Add attention heads if they exist for this layer
+            for att in all_activations_list[input_idx][0][layer]['attention']:
+                fig.add_trace(create_heatmap(att), row=input_idx+1, col=col)
+                col += 1
+    
+    # Create frames for animation
+    frames = []
+    for step in range(num_steps):
+        frame_data = []
+        for input_idx in range(num_inputs):
+            for layer in range(num_layers):
+                # MLP activations
+                frame_data.append(create_heatmap(all_activations_list[input_idx][step][layer]['mlp']))
+                
+                # Attention head activations
+                for att in all_activations_list[input_idx][step][layer]['attention']:
+                    frame_data.append(create_heatmap(att))
+        
+        frames.append(go.Frame(data=frame_data, name=f'step_{step}'))
+    
+    # Update layout
+    fig.update_layout(
+        height=300 * num_inputs,
+        width=250 * total_subplots,
+        title_text="Activation and Attention Maps Animation",
+        updatemenus=[{
+            'buttons': [
+                {
+                    'args': [None, {'frame': {'duration': interval, 'redraw': True}, 'fromcurrent': True}],
+                    'label': 'Play',
+                    'method': 'animate',
+                },
+                {
+                    'args': [[None], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}],
+                    'label': 'Pause',
+                    'method': 'animate',
+                }
+            ],
+            'direction': 'left',
+            'pad': {'r': 10, 't': 87},
+            'showactive': False,
+            'type': 'buttons',
+            'x': 0.1,
+            'xanchor': 'right',
+            'y': 0,
+            'yanchor': 'top'
+        }],
+        sliders=[{
+            'active': 0,
+            'yanchor': 'top',
+            'xanchor': 'left',
+            'currentvalue': {
+                'font': {'size': 20},
+                'prefix': 'Step:',
+                'visible': True,
+                'xanchor': 'right'
+            },
+            'transition': {'duration': 300, 'easing': 'cubic-in-out'},
+            'pad': {'b': 10, 't': 50},
+            'len': 0.9,
+            'x': 0.1,
+            'y': 0,
+            'steps': [
+                {
+                    'args': [[f'step_{i}'], {'frame': {'duration': 300, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 300}}],
+                    'label': str(i),
+                    'method': 'animate'
+                } for i in range(num_steps)
+            ]
+        }]
+    )
+    
+    # Update axes and add input sequence annotations
+    for input_idx in range(num_inputs):
+        input_text = ' '.join(input_tokens_list[input_idx])
+        fig.add_annotation(
+            text=f"Input {input_idx + 1}: {input_text}",
+            xref="paper", yref="paper",
+            x=-0.06, y=1 - (input_idx + 0.5) / num_inputs,
+            xanchor="right", yanchor="middle",
+            showarrow=False,
+            font=dict(size=12),
+            textangle=-90
+        )
+        for i in range(1, total_subplots + 1):
+            fig.update_xaxes(
+                title_text="Hidden Dim" if i % 2 == 1 else "Key",
+                title_standoff=5,  # Reduces space between axis and its label
+                row=input_idx+1,
+                col=i
+            )
+            fig.update_yaxes(
+                title_text="Sequence" if i % 2 == 1 else "Query",
+                title_standoff=5,  # Reduces space between axis and its label
+                row=input_idx+1,
+                col=i
+            )
+    
+    # Adjust subplot titles position
+    # for i in fig['layout']['annotations']:
+    #     i['y'] = i['y'] + 0.03  # Move subplot titles up slightly
+    
+    fig.frames = frames
+    
+    return fig
+
 def get_latest_checkpoint_number(folder_path):
     # Get all items in the directory
     items = os.listdir(folder_path)
@@ -386,6 +594,8 @@ def main(args):
         end_step = get_latest_checkpoint_number(args.exp_name)
     else:
         end_step = args.end_step
+        
+    print(f"end step: {end_step}")
     all_differences, param_names, param_shapes = precompute_differences(args.exp_name, args.start_step, end_step, interval=args.interval)
     all_parameter_values, param_names, param_shapes = precompute_parameter_values(args.exp_name, args.start_step, end_step, omit_bias_layernorm=True, interval=args.interval)
     diff_fig = create_interactive_plot_diffs(all_differences, param_names, param_shapes, interval=1, step=10)
@@ -397,9 +607,25 @@ def main(args):
     save_animated_figure(diff_fig, os.path.join(args.save_dir, fname + '_diff.html'))
     save_animated_figure(param_fig, os.path.join(args.save_dir, fname + '_param.html'))
     
+    input_list = [
+        "0010101010",
+        "0010111010",
+        "00101a1010"
+        ]
+    all_activations_list = []
+    input_tokens_list = []
+    for input_str in input_list:
+        all_activations, input_tokens = compute_activations_sequential(
+            args.exp_name, start_step=args.start_step, end_step=end_step, interval=args.interval, input_str=input_str
+        )
+        all_activations_list.append(all_activations)
+        input_tokens_list.append(input_tokens)
+
+    attn_fig = create_animated_activation_maps(all_activations_list, input_tokens_list, interval=args.interval)
+    save_animated_figure(attn_fig, os.path.join(args.save_dir, fname + '_attn.html'))
+    
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--checkpoint_path", type=str, default='/mnt/nas/hoyeon/circuit-analysis/checkpoints', help="Path to the directory containing model checkpoints")
     parser.add_argument("--exp_name", type=str)
     parser.add_argument("--start_step", type=int, default=0, help="Starting step for difference computation")
     parser.add_argument("--end_step", type=int, default=9999, help="Ending step for difference computation")
