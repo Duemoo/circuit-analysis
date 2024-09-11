@@ -436,21 +436,40 @@ def create_animated_activation_maps(all_activations_list, input_tokens_list, int
             # Remove titles for other rows
             annotation['text'] = ''
     
-    # Function to create heatmap trace
-    def create_heatmap(z, showscale=False):
-        return go.Heatmap(z=z, colorscale='Viridis', showscale=showscale)
+    # Calculate column-wise min and max values for consistent scaling
+    column_min_max = []
+    for col in range(total_subplots):
+        col_min = float('inf')
+        col_max = float('-inf')
+        for input_idx in range(num_inputs):
+            for step in range(num_steps):
+                layer = col // 2
+                if col % 2 == 0:  # MLP column
+                    data = all_activations_list[input_idx][step][layer]['mlp']
+                else:  # Attention column
+                    att_idx = (col - 1) % len(all_activations_list[0][0][layer]['attention'])
+                    data = all_activations_list[input_idx][step][layer]['attention'][att_idx]
+                col_min = min(col_min, data.min())
+                col_max = max(col_max, data.max())
+        column_min_max.append((col_min, col_max))
+    
+    # Function to create heatmap trace with column-wise consistent scaling
+    def create_heatmap(z, col, showscale=False):
+        return go.Heatmap(z=z, colorscale='Viridis', showscale=showscale, 
+                          zmin=column_min_max[col][0], zmax=column_min_max[col][1])
     
     # Add initial data
     for input_idx in range(num_inputs):
-        col = 1
+        col = 0
         for layer in range(num_layers):
             # Add MLP activation
-            fig.add_trace(create_heatmap(all_activations_list[input_idx][0][layer]['mlp']), row=input_idx+1, col=col)
+            fig.add_trace(create_heatmap(all_activations_list[input_idx][0][layer]['mlp'], col), 
+                          row=input_idx+1, col=col+1)
             col += 1
             
             # Add attention heads if they exist for this layer
             for att in all_activations_list[input_idx][0][layer]['attention']:
-                fig.add_trace(create_heatmap(att), row=input_idx+1, col=col)
+                fig.add_trace(create_heatmap(att, col), row=input_idx+1, col=col+1)
                 col += 1
     
     # Create frames for animation
@@ -458,13 +477,16 @@ def create_animated_activation_maps(all_activations_list, input_tokens_list, int
     for step in range(num_steps):
         frame_data = []
         for input_idx in range(num_inputs):
+            col = 0
             for layer in range(num_layers):
                 # MLP activations
-                frame_data.append(create_heatmap(all_activations_list[input_idx][step][layer]['mlp']))
+                frame_data.append(create_heatmap(all_activations_list[input_idx][step][layer]['mlp'], col))
+                col += 1
                 
                 # Attention head activations
                 for att in all_activations_list[input_idx][step][layer]['attention']:
-                    frame_data.append(create_heatmap(att))
+                    frame_data.append(create_heatmap(att, col))
+                    col += 1
         
         frames.append(go.Frame(data=frame_data, name=f'step_{step}'))
     
@@ -546,13 +568,36 @@ def create_animated_activation_maps(all_activations_list, input_tokens_list, int
                 col=i
             )
     
-    # Adjust subplot titles position
-    # for i in fig['layout']['annotations']:
-    #     i['y'] = i['y'] + 0.03  # Move subplot titles up slightly
+    # Add column-wise colorbars
+    for col in range(total_subplots):
+        fig.add_layout_image(
+            dict(
+                source="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==",
+                x=1 + (col / total_subplots),
+                sizex=1/total_subplots,
+                y=1,
+                sizey=1,
+                xref="paper",
+                yref="paper",
+                opacity=1.0,
+                layer="below",
+                sizing="stretch",
+            )
+        )
+        fig.add_annotation(
+            x=1 + ((col + 0.5) / total_subplots),
+            y=1.05,
+            xref="paper",
+            yref="paper",
+            text=f"Min: {column_min_max[col][0]:.2f}<br>Max: {column_min_max[col][1]:.2f}",
+            showarrow=False,
+            font=dict(size=8),
+        )
     
     fig.frames = frames
     
     return fig
+
 
 def get_latest_checkpoint_number(folder_path):
     # Get all items in the directory
