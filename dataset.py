@@ -75,7 +75,7 @@ class AlphabetBitSequenceDataset(BaseSequenceDataset):
 
 
 class AlphabetSequenceDataset(BaseSequenceDataset):
-    def __init__(self, sequence_length: int, tokenizer, alphabet_list: List[str], answer_ratio: Optional[List[int]] = None, special_code = None, copy_pos: int = 0):
+    def __init__(self, sequence_length: int, tokenizer, alphabet_list: List[str], special_code = None, copy_pos: int = 0):
         self.alphabet_list = alphabet_list
         super().__init__(sequence_length, tokenizer, special_code, copy_pos)
         
@@ -372,7 +372,6 @@ class KFoldAlphabetCustomDataloader:
         for idx, label in enumerate(self.dataset.labels):
             if label in alphabet_indices:
                 alphabet_indices[label].append(idx)
-        # print(f"alphabet_indices: {alphabet_indices}")
                 
         # Normalize the answer_ratio so that it sums to 1
         if self.answer_ratio:
@@ -388,11 +387,11 @@ class KFoldAlphabetCustomDataloader:
         for alphabet, ratio in zip(self.train_alphabets, self.answer_ratio):
             # alphabet is in both train and test
             if alphabet in self.train_alphabets and alphabet in self.test_alphabets:
-                if len(alphabet_indices[alphabet]) < self.num_data * ((ratio * ((self.n_splits-1) / self.n_splits)) + (1 / (self.n_splits * (len(self.test_alphabets))))):
-                    fixed_num_data = math.floor((len(alphabet_indices[alphabet]) / ((ratio * ((self.n_splits-1) / self.n_splits)) + (1 / (self.n_splits * (len(self.test_alphabets)))))))
+                if len(alphabet_indices[alphabet]) < fixed_num_data * ((ratio * ((self.n_splits-1) / self.n_splits)) + (1 / (self.n_splits * (len(self.test_alphabets))))):
+                    fixed_num_data = math.floor((len(alphabet_indices[alphabet]) / ((ratio * ((self.n_splits-1) / self.n_splits)) + (1 / (self.n_splits * len(self.test_alphabets))))))
             # alphabet is only in train_alphabet
-            else:
-                if len(alphabet_indices[alphabet]) < self.num_data * ((self.n_splits-1) / self.n_splits) * ratio:
+            elif alphabet in self.train_alphabets:
+                if len(alphabet_indices[alphabet]) < fixed_num_data * ((self.n_splits-1) / self.n_splits) * ratio:
                     fixed_num_data = math.floor((len(alphabet_indices[alphabet])*self.n_splits) / (ratio*(self.n_splits-1)))
         if fixed_num_data != self.num_data:
             logging.warning(f"WARNING : num_data is changed!! : final num_data: {fixed_num_data}")
@@ -403,7 +402,7 @@ class KFoldAlphabetCustomDataloader:
         val_indices = []
         for alphabet in set(self.train_alphabets) | set(self.test_alphabets):
             # alphabet is in both train and test
-            if alphabet in self.train_alphabets and alphabet in self.test_alphabets:
+            if (alphabet in self.train_alphabets) and (alphabet in self.test_alphabets):
                 ratio = self.answer_ratio[self.train_alphabets.index(alphabet)]
                 train_n_samples = round(self.num_data * ((self.n_splits-1) / self.n_splits) * ratio)
                 val_n_samples = round(self.num_data * (1 / (self.n_splits * len(self.test_alphabets))))
@@ -421,8 +420,8 @@ class KFoldAlphabetCustomDataloader:
                 val_n_samples = round(self.num_data * (1 / (self.n_splits * len(self.test_alphabets))))
                 indices_for_alphabet = random.sample(alphabet_indices[alphabet], len(alphabet_indices[alphabet]))
                 val_indices += indices_for_alphabet[val_n_samples * fold_idx:val_n_samples * (fold_idx + 1)]
-        print(f"train_indices len: {len(train_indices)}")
-        print(f"val_indices len: {len(val_indices)}")
+        print(f"train_indices len: {len(train_indices)}\n{train_indices}")
+        print(f"val_indices len: {len(val_indices)}\n{val_indices}")
         
         return train_indices, val_indices
 
@@ -448,8 +447,8 @@ class KFoldAlphabetCustomDataloader:
 
 if __name__=="__main__":
     # Usage example
-    TRAIN_LENGTH = 3
-    NUM_DATA = 100000
+    TRAIN_LENGTH = 5
+    NUM_DATA = 10000
     NOISE_RATIO = [0.0, 0.0, 0.0, 0.0]
     BATCH_SIZE = 2
     SEED = 42
@@ -457,7 +456,7 @@ if __name__=="__main__":
     ONLY_SPECIAL_CODE =  [True, True, False, False]
     ONLY_NOISE =         [True, False, True, False]
     NOISY_SPECIAL_CODE = [True, False, True, False]
-    EPOCH = 4
+    EPOCH = 1
     SPECIAL_CODE = '10'
 
     device = "cpu"
@@ -465,8 +464,8 @@ if __name__=="__main__":
     from transformers import (GPT2TokenizerFast,
                               AutoTokenizer)
     tokenizer = AutoTokenizer.from_pretrained("gpt2-medium")
-    tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2.json", 
-                                        merges_file="./vocab/vocab_GPT2.txt", 
+    tokenizer = GPT2TokenizerFast(vocab_file="./vocab/vocab_GPT2_alphabet.json", 
+                                        merges_file="./vocab/vocab_GPT2_alphabet.txt", 
                                         special_tokens=tokenizer.special_tokens_map, 
                                         model_max_length=1024)
 
@@ -488,8 +487,8 @@ if __name__=="__main__":
     
     
     TRAIN_ALPHABETS=["a","b","c"]
-    VAL_ALPHABETS=["a","b","c"]
-    ANSWER_RATIO=[0.7, 0.3, 0.0]
+    VAL_ALPHABETS=["a","b","c","d"]
+    ANSWER_RATIO=[0.6, 0.3, 0.1]
     dataset = AlphabetSequenceDataset(TRAIN_LENGTH, tokenizer, alphabet_list=list(set(TRAIN_ALPHABETS) | set(VAL_ALPHABETS)))
     print(f"Total number of sequences in dataset: {len(dataset)}")
     
