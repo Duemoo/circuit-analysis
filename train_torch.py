@@ -136,7 +136,7 @@ def create_performance_heatmap(performance_data, exp_name):
         heatmap_data[i, j] = prob
     
     # Create the heatmap
-    plt.figure(figsize=(20, 15))  # Increased figure size for better readability
+    plt.figure(figsize=(20, 30))  # Increased figure size for better readability
     ax = sns.heatmap(heatmap_data, cmap='viridis')
     
     # Set x-ticks for every 1000 steps
@@ -178,9 +178,7 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
     model.eval()
     
     metrics = {
-        'all': {'loss': 0.0, 'correct': 0, 'total': 0},
-        'trained': {'loss': 0.0, 'correct': 0, 'total': 0},
-        'not-trained': {'loss': 0.0, 'correct': 0, 'total': 0}
+        key: {'loss': 0.0, 'correct': 0, 'total': 0} for key in ['_all', '_trained', '_not-trained']+[alphabet for alphabet in cfg.dataset.val_alphabets]
     }
     
     special_not_noisy_records = []
@@ -195,19 +193,25 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
         predictions = torch.argmax(prediction_probs, dim=-1)
         correct = (predictions == labels).float()
         
-        metrics['all']['loss'] += avg_loss.item() * inputs.size(0)
-        metrics['all']['correct'] += correct.sum().item()
-        metrics['all']['total'] += inputs.size(0)
+        metrics['_all']['loss'] += avg_loss.item() * inputs.size(0)
+        metrics['_all']['correct'] += correct.sum().item()
+        metrics['_all']['total'] += inputs.size(0)
         
         trained_mask = torch.isin(labels, trained_ids).int()
-        metrics['trained']['loss'] += (avg_loss * trained_mask).sum().item()
-        metrics['trained']['correct'] += (correct * trained_mask).sum().item()
-        metrics['trained']['total'] += trained_mask.sum().item()
+        metrics['_trained']['loss'] += (avg_loss * trained_mask).sum().item()
+        metrics['_trained']['correct'] += (correct * trained_mask).sum().item()
+        metrics['_trained']['total'] += trained_mask.sum().item()
         
         normal_mask = ~trained_mask
-        metrics['not-trained']['loss'] += (avg_loss * normal_mask).sum().item()
-        metrics['not-trained']['correct'] += (correct * normal_mask).sum().item()
-        metrics['not-trained']['total'] += normal_mask.sum().item()
+        metrics['_not-trained']['loss'] += (avg_loss * normal_mask).sum().item()
+        metrics['_not-trained']['correct'] += (correct * normal_mask).sum().item()
+        metrics['_not-trained']['total'] += normal_mask.sum().item()
+        
+        for alphabet in cfg.dataset.val_alphabets:
+            alphabet_mask = (labels == tokenizer.get_vocab()[alphabet]).int()
+            metrics[alphabet]['loss'] += (avg_loss * alphabet_mask).sum().item()
+            metrics[alphabet]['correct'] += (correct * alphabet_mask).sum().item()
+            metrics[alphabet]['total'] +=alphabet_mask.sum().item()
         
         return prediction_probs
 
@@ -221,7 +225,7 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
             if log_correct:
                 for i in range(inputs.size(0)):
                     # if special_mask[i]:
-                    input_seq = tokenizer.decode(inputs[i])
+                    input_seq = tokenizer.decode(inputs[i][1:])
                     correct_prob = prediction_probs[i, labels[i]].item()
                     special_not_noisy_records.append((input_seq, correct_prob))
     
@@ -241,7 +245,7 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
     # Log metrics to wandb
     wandb_log = {}
     for case in metrics:
-        if case in ['all', 'trained', 'not-trained']:
+        if case in ['_all', '_trained', '_not-trained']+[alphabet for alphabet in cfg.dataset.val_alphabets]:
             wandb_log[f'avg_loss/{case}'] = metrics[case]['avg_loss']
             wandb_log[f'accuracy/{case}'] = metrics[case]['accuracy']
     
@@ -253,7 +257,7 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
     # Log metrics to terminal
     logging.info(f"Evaluation results for step {step}:")
     for case in metrics:
-        if case in ['all', 'trained', 'not-trained']:
+        if case in ['_all', '_trained', '_not-trained']+[alphabet for alphabet in cfg.dataset.val_alphabets]:
             logging.info(f"{case.capitalize()} - Avg Loss: {metrics[case]['avg_loss']:.4f}, Accuracy: {metrics[case]['accuracy']:.2f}%")
     
     logging.info("Sparsity Metrics:")
@@ -471,7 +475,8 @@ def train(cfg: DictConfig):
             alphabet_list=list(set(cfg.dataset.train_alphabets) | set(cfg.dataset.val_alphabets))
             )
         print(f"Total number of sequences in dataset: {len(dataset)}")
-        
+        print(cfg.dataset.answer_ratio)
+        print(cfg.dataset.train_alphabets)
         kfold_dataloader = KFoldAlphabetCustomDataloader(dataset, 
                                                          num_data=cfg.dataset.num_data, 
                                                          train_alphabets=cfg.dataset.train_alphabets, 
@@ -613,12 +618,13 @@ def train(cfg: DictConfig):
                 "train/learning_rate": scheduler.get_last_lr()[0]  # Retrieve the current learning rate
             }, step=step)
             
-        # Evaluate every step
-        special_not_noisy_records = evaluate(model, val_dataloader, alphabet_dataloader, tokenizer, device, step, cfg.train.log_correct, cfg)
+        # Evaluate for every val_step
+        if step%cfg.train.val_interval == 0:
+            special_not_noisy_records = evaluate(model, val_dataloader, alphabet_dataloader, tokenizer, device, step, cfg.train.log_correct, cfg)
         
-        if cfg.train.log_correct:
-            for input_seq, prob in special_not_noisy_records:
-                performance_data.append((input_seq, step, prob))
+            if cfg.train.log_correct:
+                for input_seq, prob in special_not_noisy_records:
+                    performance_data.append((input_seq, step, prob))
         
         steps_in_current_config += 1
         model.train()

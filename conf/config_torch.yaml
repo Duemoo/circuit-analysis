@@ -11,9 +11,9 @@ dataset:
   # noise_ratio: [0.0, 0.0, 0.0]
   # special_code: '10'
   copy_pos: 0
-  train_alphabets: ['a', 'b']
-  val_alphabets: ['a', 'b', 'c']
-  answer_ratio: [0.99, 0.01]
+  train_alphabets: ['a', 'b', 'c']
+  val_alphabets: ['a', 'b', 'c', 'd']
+  answer_ratio: [0.60, 0.30, 0.10]
   # skip_train_noisy:
   # skip_train_special_code: 
   # only_train_noisy:
@@ -31,15 +31,16 @@ optimizer:
 
 train:
   # exp_name: L${model.n_layer}_H${model.n_head}_E${model.n_embd}_len${dataset.train_length}_code${dataset.special_code}_pos${dataset.copy_pos}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_inject_special
-  exp_name: alphabet-debug
+  exp_name: L${model.n_layer}_H${model.n_head}_E${model.n_embd}_len${dataset.train_length}_t${dataset.train_alphabets}_v${dataset.val_alphabets}_r${dataset.answer_ratio}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_inject_special
+  # exp_name: alphabet-debug
   seed: 42
   wandb: True
   wandb_project_name: alphabet_copy
   wandb_entity: lklab_kaist
-  batch_size: 1
+  batch_size: 4
   warmup_steps: 0
-  config_steps: [1000]
+  config_steps: [10000]
   max_grad_norm: 
-  val_interval: 1
-  save_model_interval: 1
+  val_interval: 10
+  save_model_interval: 
   log_correct: True
