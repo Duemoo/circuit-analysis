@@ -390,6 +390,10 @@ def calculate_sparsity_metrics(model, threshold=0.0001):
     return sparsity_metrics
 
 
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def train(cfg: DictConfig):
     # Check Config's expected error
     config_check(cfg)
@@ -487,35 +491,71 @@ def train(cfg: DictConfig):
         alphabet_dataloader = None
     else:
         raise NotImplementedError
+    
+    
+    # Log initial trainable parameters
+    initial_trainable_params = count_trainable_parameters(model)
+    logging.info(f"Initial trainable parameters: {initial_trainable_params:,}")
+    
+    
+    # Implement freezing options
+    if cfg.train.freeze_word_emb:
+        for param in model.transformer.wte.parameters():
+            param.requires_grad = False
+        logging.info("Word embeddings frozen")
+    
+    if cfg.train.freeze_pos_emb:
+        for param in model.transformer.wpe.parameters():
+            param.requires_grad = False
+        logging.info("Position embeddings frozen")
+    
+    if cfg.train.train_attn_only:
+        for name, param in model.named_parameters():
+            if 'attn' not in name:
+                param.requires_grad = False
+        logging.info("All parameters except attention matrices frozen")
 
+    # Log final trainable parameters
+    final_trainable_params = count_trainable_parameters(model)
+    logging.info(f"Final trainable parameters: {final_trainable_params:,}")
+    
+    # Log to wandb
+    if cfg.train.wandb:
+        wandb.log({
+            "initial_trainable_params": initial_trainable_params,
+            "final_trainable_params": final_trainable_params
+        })
+
+    # Initialize optimizer with filtered parameters
+    optimizer_params = [p for p in model.parameters() if p.requires_grad]
+    
     # Initialize optimizer
     optimizer: optim.Optimizer
     if cfg.optimizer.optimizer_name in ["Adam", "AdamW"]:
-        # Weight decay in Adam is implemented badly, so use AdamW instead (see PyTorch AdamW docs)
         if cfg.optimizer.weight_decay is not None:
             optimizer = optim.AdamW(
-                model.parameters(), 
+                optimizer_params, 
                 lr=cfg.optimizer.learning_rate,
                 weight_decay=cfg.optimizer.weight_decay,
             )
         else:
             optimizer = optim.Adam(
-                model.parameters(),
+                optimizer_params,
                 lr=cfg.optimizer.learning_rate,
             )
     elif cfg.optimizer.optimizer_name == "SGD":
         optimizer = optim.SGD(
-            model.parameters(),
+            optimizer_params,
             lr=cfg.optimizer.learning_rate,
             weight_decay=(cfg.optimizer.weight_decay if cfg.optimizer.weight_decay is not None else 0.0),
             momentum=cfg.optimizer.momentum,
         )
     elif cfg.optimizer.optimizer_name.lower() == "rmsprop":
         optimizer = optim.RMSprop(
-            model.parameters(),
+            optimizer_params,
             lr=cfg.optimizer.learning_rate,
-            alpha=cfg.optimizer.get('alpha', 0.99),  # smoothing constant
-            eps=cfg.optimizer.get('eps', 1e-8),  # term added to the denominator to improve numerical stability
+            alpha=cfg.optimizer.get('alpha', 0.99),
+            eps=cfg.optimizer.get('eps', 1e-8),
             weight_decay=cfg.optimizer.get('weight_decay', 0),
             momentum=cfg.optimizer.get('momentum', 0),
             centered=cfg.optimizer.get('centered', False)

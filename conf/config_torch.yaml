@@ -4,7 +4,7 @@ defaults:
 
 dataset:
   type: alphabet
-  train_length: 5
+  train_length: 6
   num_data: 10000
   # max_data_num: 100000
   # max_alphabet_data_num: 10
@@ -13,7 +13,7 @@ dataset:
   copy_pos: 0
   train_alphabets: ['a', 'b', 'c']
   val_alphabets: ['a', 'b', 'c', 'd']
-  answer_ratio: [0.60, 0.30, 0.10]
+  answer_ratio: [0.6, 0.3, 0.1]
   # skip_train_noisy:
   # skip_train_special_code: 
   # only_train_noisy:
@@ -26,7 +26,7 @@ dataset:
 optimizer:
   optimizer_name: AdamW
   learning_rate: 1e-4
-  weight_decay: 0.1
+  weight_decay: 1
   # momentum: 0.0
 
 train:
@@ -37,10 +37,13 @@ train:
   wandb: True
   wandb_project_name: alphabet_copy
   wandb_entity: lklab_kaist
-  batch_size: 4
+  batch_size: 64
   warmup_steps: 0
-  config_steps: [10000]
+  config_steps: [100000]
   max_grad_norm: 
-  val_interval: 10
-  save_model_interval: 
+  val_interval: 100
+  save_model_interval: 100
   log_correct: True
+  freeze_word_emb: false
+  freeze_pos_emb: false
+  train_attn_only: true
