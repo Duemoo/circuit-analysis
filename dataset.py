@@ -376,7 +376,7 @@ class KFoldAlphabetCustomDataloader:
                 
         # Normalize the answer_ratio so that it sums to 1
         if self.answer_ratio:
-            assert len(self.train_alphabets) == len(self.answer_ratio)
+            assert len(self.train_alphabets) == len(self.answer_ratio), f"The length of self.train_alphabets ({self.train_alphabets}) and self.answer_ratio should be matched ({self.answer_ratio}))"
             total = sum(self.answer_ratio)
             self.answer_ratio = [r / total for r in self.answer_ratio]
         else:
