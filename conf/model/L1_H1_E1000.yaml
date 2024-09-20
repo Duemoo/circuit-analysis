@@ -4,18 +4,18 @@ _name_or_path: openai-community/gpt2
 activation_function: gelu_new
 # The dropout ratio for the attention
 attn_pdrop: 0.1
-bos_token_id: 2
+bos_token_id: 9999
 # The dropout ratio for the embeddings
 embd_pdrop: 0.1
-eos_token_id: 2
+eos_token_id: 9999
 initializer_range: 0.02
 # The epsilon to use in the layer normalization layers
 layer_norm_epsilon: 1e-05
-n_ctx: ${eval:'${dataset.train_length} + 1'}
-n_embd: 16
-n_head: 2
-n_layer: 2
-n_positions: ${eval:'${dataset.train_length} + 1'}
+n_ctx: ${eval:'${dataset.train_length} + 10'}
+n_embd: 1000
+n_head: 1
+n_layer: 1
+n_positions: ${eval:'${dataset.train_length} + 10'}
 # The dropout probability for all fully connected layers in the embeddings, encoder, and pooler
 resid_pdrop: 0.1
 summary_activation:
