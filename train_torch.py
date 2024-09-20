@@ -62,6 +62,9 @@ def config_check(cfg: DictConfig):
             raise Exception("cfg.dataset.noise_ratio should be List[int] or float type")
     
     elif cfg.dataset.type == 'alphabet':
+        assert len(cfg.dataset.answer_ratio) == len(cfg.dataset.train_alphabets) + len(cfg.dataset.confounder_alphabets), \
+            "You should give full answer_ratio"
+        assert len(cfg.train.config_steps) == len(cfg.dataset.confounder_alphabets) + 1, "cfg.train.config_steps length error"    
         pass
     
     
@@ -476,18 +479,17 @@ def train(cfg: DictConfig):
         dataset = AlphabetSequenceDataset(
             cfg.dataset.train_length, 
             tokenizer, 
-            alphabet_list=list(set(cfg.dataset.train_alphabets) | set(cfg.dataset.val_alphabets))
+            alphabet_list=list(set(cfg.dataset.train_alphabets) | set(cfg.dataset.val_alphabets) | set(cfg.dataset.confounder_alphabets))
             )
         print(f"Total number of sequences in dataset: {len(dataset)}")
-        print(cfg.dataset.answer_ratio)
-        print(cfg.dataset.train_alphabets)
         kfold_dataloader = KFoldAlphabetCustomDataloader(dataset, 
                                                          num_data=cfg.dataset.num_data, 
                                                          train_alphabets=cfg.dataset.train_alphabets, 
-                                                         answer_ratio=cfg.dataset.answer_ratio, 
+                                                         answer_ratio=cfg.dataset.answer_ratio[:len(cfg.dataset.train_alphabets)], 
                                                          test_alphabets=cfg.dataset.val_alphabets, 
                                                          batch_size=cfg.train.batch_size, 
                                                          seed=cfg.train.seed)
+        print(f"Initial dataloder properties : {kfold_dataloader.train_alphabets} & {kfold_dataloader.answer_ratio}")
         alphabet_dataloader = None
     else:
         raise NotImplementedError
@@ -597,23 +599,25 @@ def train(cfg: DictConfig):
     train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
     
     for step in tqdm(range(total_steps)):
-        if cfg.dataset.type == 'bit':
-            # Check if we need to switch to the next configuration
-            if steps_in_current_config >= cfg.train.config_steps[config_index]:
-                config_index += 1
-                steps_in_current_config = 0
-                
+        # Check if we need to switch to the next configuration
+        if steps_in_current_config >= cfg.train.config_steps[config_index]:
+            config_index += 1
+            steps_in_current_config = 0
+            if cfg.dataset.type == 'bit':
                 # Update dataloader configuration
                 kfold_dataloader.noise_ratio = cfg.dataset.noise_ratio[config_index]
                 kfold_dataloader.general = cfg.dataset.general[config_index]
                 kfold_dataloader.only_special_code = cfg.dataset.only_special_code[config_index]
                 kfold_dataloader.only_noise = cfg.dataset.only_noise[config_index]
                 kfold_dataloader.noisy_special_code = cfg.dataset.noisy_special_code[config_index]
-                
-                # Get new dataloaders
+            elif cfg.dataset.type == "alphabet":
+                kfold_dataloader.train_alphabets = cfg.dataset.train_alphabets + cfg.dataset.confounder_alphabets[:config_index]
+                kfold_dataloader.answer_ratio = cfg.dataset.answer_ratio[:len(kfold_dataloader.train_alphabets)]
+                print(f"Changed dataloder properties at step {step}: {kfold_dataloader.train_alphabets} & {kfold_dataloader.answer_ratio}")
                 # logging.warning(f"noise ratio: {kfold_dataloader.noise_ratio}")
-                train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
-                logging.info(f"Switched to configuration {config_index}. Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
+            # Get new dataloaders
+            train_dataloader, val_dataloader = kfold_dataloader.get_fold(0)
+            logging.info(f"Switched to configuration {config_index}. Number of samples in train dataloader: {len(train_dataloader.noisy_dataset)}")
 
         # Get a batch
         batch = next(iter(train_dataloader))

@@ -348,7 +348,6 @@ class KFoldAlphabetCustomDataloader:
                  general=True, only_special_code=True, only_noise=True, noisy_special_code=True):
         self.dataset = dataset
         self.num_data = min(num_data, len(dataset))
-        print(f"num_data: {self.num_data}")
         self.train_alphabets = train_alphabets
         self.answer_ratio = answer_ratio
         self.test_alphabets = test_alphabets
@@ -380,7 +379,6 @@ class KFoldAlphabetCustomDataloader:
             self.answer_ratio = [r / total for r in self.answer_ratio]
         else:
             self.answer_ratio = [1 / len(self.train_alphabets)] * len(self.train_alphabets)
-        print(f"answer_ratio: {self.answer_ratio}")
             
         # 만약 해당 비율만큼 충분한 데이터가 original dataset에 없다면 error
         fixed_num_data = self.num_data
@@ -420,8 +418,10 @@ class KFoldAlphabetCustomDataloader:
                 val_n_samples = round(self.num_data * (1 / (self.n_splits * len(self.test_alphabets))))
                 indices_for_alphabet = random.sample(alphabet_indices[alphabet], len(alphabet_indices[alphabet]))
                 val_indices += indices_for_alphabet[val_n_samples * fold_idx:val_n_samples * (fold_idx + 1)]
-        print(f"train_indices len: {len(train_indices)}\n{train_indices}")
-        print(f"val_indices len: {len(val_indices)}\n{val_indices}")
+        print(f"train_indices len: {len(train_indices)}")
+        print(f"val_indices len: {len(val_indices)}")
+        # print(f"train_indices len: {len(train_indices)}\n{train_indices}")
+        # print(f"val_indices len: {len(val_indices)}\n{val_indices}")
         
         return train_indices, val_indices
 
