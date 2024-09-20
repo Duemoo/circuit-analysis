@@ -30,6 +30,8 @@ load_dotenv(dotenv_path="./.env", verbose=True)
 OmegaConf.register_new_resolver("eval", eval)
 
 def freezed_params(freeze_word_emb: bool, freeze_pos_emb: bool, train_attn_only: bool) -> str:
+    if all(arg == False for arg in [freeze_word_emb, freeze_pos_emb, train_attn_only]):
+        return "train-all"
     if train_attn_only:
         return "attn-only"
     elif freeze_word_emb and freeze_pos_emb:
