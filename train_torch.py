@@ -29,6 +29,18 @@ load_dotenv(dotenv_path="./.env", verbose=True)
 # To identify arithmetic expressions in config files
 OmegaConf.register_new_resolver("eval", eval)
 
+def freezed_params(freeze_word_emb: bool, freeze_pos_emb: bool, train_attn_only: bool) -> str:
+    if train_attn_only:
+        return "attn-only"
+    elif freeze_word_emb and freeze_pos_emb:
+        return "word+pos-freeze"
+    elif freeze_pos_emb:
+        return "pos-freeze"
+    elif freeze_word_emb:
+        return "word-freeze"
+    else:
+        raise Exception()
+OmegaConf.register_new_resolver("freezed_params", freezed_params)
 
 def config_check(cfg: DictConfig):
     # Ensure exp_name is provided
@@ -479,8 +491,6 @@ def train(cfg: DictConfig):
             alphabet_list=list(set(cfg.dataset.train_alphabets) | set(cfg.dataset.val_alphabets))
             )
         print(f"Total number of sequences in dataset: {len(dataset)}")
-        print(cfg.dataset.answer_ratio)
-        print(cfg.dataset.train_alphabets)
         kfold_dataloader = KFoldAlphabetCustomDataloader(dataset, 
                                                          num_data=cfg.dataset.num_data, 
                                                          train_alphabets=cfg.dataset.train_alphabets, 
@@ -650,8 +660,12 @@ def train(cfg: DictConfig):
                 'noisy_not_special': torch.sum((are_special == 0) & (are_noisy == 1)).item(),
                 'special_and_noisy': torch.sum((are_special == 1) & (are_noisy == 1)).item()
             }
-            wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()}, step=step)
-                
+        elif cfg.dataset.type == 'alphabet':
+            batch_composition = {}
+            for alphabet in cfg.dataset.train_alphabets:
+                alphabet_id = tokenizer.get_vocab()[alphabet]
+                batch_composition[alphabet] = torch.sum(labels == alphabet_id).item()
+        wandb.log({f"batch_composition/{k}": v for k, v in batch_composition.items()}, step=step)
         # Log learning rate if scheduling is applied
         if cfg.train.warmup_steps > 0:
             wandb.log({

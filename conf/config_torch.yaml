@@ -31,7 +31,7 @@ optimizer:
 
 train:
   # exp_name: L${model.n_layer}_H${model.n_head}_E${model.n_embd}_len${dataset.train_length}_code${dataset.special_code}_pos${dataset.copy_pos}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_inject_special
-  exp_name: L${model.n_layer}_H${model.n_head}_E${model.n_embd}_len${dataset.train_length}_t${dataset.train_alphabets}_v${dataset.val_alphabets}_r${dataset.answer_ratio}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}
+  exp_name: L${model.n_layer}_H${model.n_head}_E${model.n_embd}_len${dataset.train_length}_t${dataset.train_alphabets}_v${dataset.val_alphabets}_r${dataset.answer_ratio}_pos${dataset.copy_pos}_bsize${train.batch_size}_lr${optimizer.learning_rate}_wd${optimizer.weight_decay}_${freezed_params:${train.freeze_word_emb},${train.freeze_pos_emb},${train.train_attn_only}}
   # exp_name: alphabet-debug
   seed: 42
   wandb: True
