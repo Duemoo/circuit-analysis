@@ -200,7 +200,8 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
     def process_batch(inputs, labels):
         outputs = model(inputs)["logits"]
         loss_per_token = lm_cross_entropy_loss(logits=outputs, tokens=inputs, per_token=True)
-        avg_loss = loss_per_token[:,-1].mean()
+        label_loss = loss_per_token[:,-1]
+        avg_loss = label_loss.mean()
         trained_ids = torch.tensor([tokenizer.get_vocab()[alphabet] for alphabet in cfg.dataset.train_alphabets]).to(device)
         
         prediction_probs = F.softmax(outputs[:, -2, :], dim=-1)
@@ -212,18 +213,18 @@ def evaluate_alphabet(model, dataloader, tokenizer, device, step, log_correct, c
         metrics['_all']['total'] += inputs.size(0)
         
         trained_mask = torch.isin(labels, trained_ids).int()
-        metrics['_trained']['loss'] += (avg_loss * trained_mask).sum().item()
+        metrics['_trained']['loss'] += (label_loss * trained_mask).sum().item()
         metrics['_trained']['correct'] += (correct * trained_mask).sum().item()
         metrics['_trained']['total'] += trained_mask.sum().item()
         
         normal_mask = ~trained_mask
-        metrics['_not-trained']['loss'] += (avg_loss * normal_mask).sum().item()
+        metrics['_not-trained']['loss'] += (label_loss * normal_mask).sum().item()
         metrics['_not-trained']['correct'] += (correct * normal_mask).sum().item()
         metrics['_not-trained']['total'] += normal_mask.sum().item()
         
         for alphabet in cfg.dataset.val_alphabets:
             alphabet_mask = (labels == tokenizer.get_vocab()[alphabet]).int()
-            metrics[alphabet]['loss'] += (avg_loss * alphabet_mask).sum().item()
+            metrics[alphabet]['loss'] += (label_loss * alphabet_mask).sum().item()
             metrics[alphabet]['correct'] += (correct * alphabet_mask).sum().item()
             metrics[alphabet]['total'] +=alphabet_mask.sum().item()
         
